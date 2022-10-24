@@ -1,0 +1,3 @@
+miniclass
+=========
+README text here.
