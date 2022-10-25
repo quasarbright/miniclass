@@ -133,5 +133,19 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
      #`(vector-ref #,vector-stx #,index-stx)
      #`(lambda (v) (vector-set! #,vector-stx #,index-stx v)))))
 
+(define (new cls . fields)
+  (apply (class-info-constructor cls) fields))
+
+(define-syntax send
+  (syntax-parser
+    [(_ obj:expr method-name:id arg:expr ...)
+     #'(send-rt obj #'method-name arg ...)]))
+
+(define (send-rt obj method-name-stx . args)
+  (let* ([cls (object-class obj)]
+         [index ((class-info-name->method-index cls) method-name-stx)]
+         [method-table (class-info-method-table cls)]
+         [method (vector-ref method-table index)])
+    (apply method obj args)))
 
 (module+ test)

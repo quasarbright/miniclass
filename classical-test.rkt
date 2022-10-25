@@ -12,5 +12,5 @@
       (class
         (field x)
         (define (add y) (+ x y))))
-    ;(define foo (new foo% 1))
-    #;(check-equal? (send foo add 2) 3)))
+    (define foo (new foo% 1))
+    (check-equal? (send foo add 2) 3)))
