@@ -94,22 +94,22 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
 
 (define-syntax class
   (syntax-parser
-    [(_ (~alt (~optional ((~literal field) field-name:id ...))
+    [(_ (~alt (~optional ((~literal field) field-name:id ...) #:defaults ([(field-name 1) null]))
               ((~literal define) (method-name:id method-arg:id ...) method-body:expr ...))
       ...)
      (define num-fields (length (attribute field-name)))
      (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
      #'(letrec ([method-table
-                 ; to support class-level expressions that may call methods and fields,
-                 ; this will have to be done around class-level expressions too
-                 (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                   (vector (lambda (this-arg method-arg ...)
-                             (let ([fields (object-fields this-arg)])
-                               (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                            ...)
+                 (vector (lambda (this-arg method-arg ...)
+                           ; to support class-level expressions that may call methods and fields,
+                           ; this will have to be done around class-level expressions too
+                           (let ([fields (object-fields this-arg)])
+                             (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                          ...)
+                               (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
                                  method-body
-                                 ...)))
-                           ...))]
+                                 ...))))
+                         ...)]
                 [constructor
                  (lambda (field-name ...)
                    (object (vector field-name ...) cls))]

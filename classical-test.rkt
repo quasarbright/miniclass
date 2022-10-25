@@ -13,4 +13,42 @@
         (field x)
         (define (add y) (+ x y))))
     (define foo (new foo% 1))
-    (check-equal? (send foo add 2) 3)))
+    (check-equal? (send foo add 2) 3))
+  (test-case "empty class"
+    (define foo% (class))
+    (new foo%)
+    (void))
+  (test-case "internal method call"
+    (define foo%
+      (class
+        (define (f x)
+          (send this g x))
+        (define (g x)
+          (add1 x))))
+    (define foo (new foo%))
+    (check-equal? (send foo f 1) 2))
+  (test-case "mutually recursive methods"
+    (define parity%
+      (class
+        (define (even? n)
+          (if (= n 0)
+              #t
+              (send this odd? (sub1 n))))
+        (define (odd? n)
+          (if (= n 0)
+              #f
+              (send this even? (sub1 n))))))
+    (define parity (new parity%))
+    (check-equal? (send parity even? 10) #t)
+    (check-equal? (send parity even? 11) #f))
+  (test-case "mutating a field"
+    (define counter%
+      (class
+        (field count)
+        (define (inc) (set! count (add1 count)))
+        (define (get) count)))
+    (define counter (new counter% 0))
+    (send counter inc)
+    (send counter inc)
+    (send counter inc)
+    (check-equal? (send counter get) 3)))
