@@ -4,7 +4,7 @@
 
 (module+ test (require rackunit))
 
-(require "./classical.rkt")
+(require "./simple.rkt")
 
 (module+ test
   (test-case "simple class"
