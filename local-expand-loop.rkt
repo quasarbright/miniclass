@@ -67,7 +67,7 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
 |#
 
 ; initially copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
-(define-syntax block
+(define-syntax class
   (make-expression-transformer
    (lambda (stx)
      ;; Body can have mixed exprs and defns. Wrap expressions with
@@ -76,7 +76,7 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
      (let* ([def-ctx (syntax-local-make-definition-context)]
             [ctx (generate-expand-context #t)]
             ;; [kernel-forms (kernel-form-identifier-list)]
-            [stoplist (list #'begin #'define-syntaxes #'define-values)]
+            [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda)]
             [init-exprs (let ([v (syntax->list stx)])
                           (unless v (raise-syntax-error #f "bad syntax" stx))
                           (cdr v))]
@@ -86,7 +86,8 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
                  (reverse r)
                  (let ([expr (local-expand (car todo) ctx stoplist def-ctx)]
                        [todo (cdr todo)])
-                   (syntax-case expr (begin define-syntaxes define-values)
+                   ; TODO translate to syntax/parse
+                   (syntax-case expr (begin define-syntaxes define-values field)
                      [(begin . rest)
                       (loop (append (syntax->list #'rest) todo) r)]
                      [(define-syntaxes (id ...) rhs)
@@ -104,57 +105,97 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
                                             expr
                                             expr)
                                            r))))]
+                     ; TODO check for lambda after translating to syntax/parse
+                     ; but only if it's public (right now that's true by default)
                      [(define-values (id ...) rhs)
                       (andmap identifier? (syntax->list #'(id ...)))
                       (let ([ids (syntax->list #'(id ...))])
-                        (syntax-local-bind-syntaxes ids #f def-ctx)
-                        (with-syntax ([(id ...) (map syntax-local-identifier-as-binding
-                                                       (syntax->list #'(id ...)))])
+                        ; I actually don't think you want to bind these since they cannot be referenced in the usual way
+                        ; it might also interfere with the free-id equality check
+                        (loop todo (cons (datum->syntax
+                                          expr
+                                          (list #'define-values #'(id ...) #'rhs)
+                                          expr
+                                          expr)
+                                         r)))]
+                     [(field id ...)
+                      (andmap identifier? (syntax->list #'(id ...)))
+                      (let ([ids (syntax->list #'(id ...))])
+                        (with-syntax ([(id ...) (syntax-local-bind-syntaxes ids #f def-ctx)])
                           (loop todo (cons (datum->syntax
                                             expr
-                                            (list #'define-values #'(id ...) #'rhs)
+                                            ; block does this slightly differently, be careful
+                                            #'(field id ...)
                                             expr
                                             expr)
                                            r))))]
-                     [else (loop todo (cons expr r))]))))])
+                     [else (raise-syntax-error #f "expressions are not allowed inside of a class body")]))))])
        (let loop ([exprs exprs]
+                  ; list of (define-syntaxes ...) exprs
                   [prev-stx-defns null]
+                  ; list of (define-values ...) exprs
                   [prev-defns null]
-                  [prev-exprs null])
+                  ; list of (field id ...) exprs
+                  [prev-fields null])
          (cond
            [(null? exprs)
             (add-decl-props
              def-ctx
              (append prev-stx-defns prev-defns)
-             #`(letrec-syntaxes+values
-                #,(map stx-cdr (reverse prev-stx-defns))
-                #,(map stx-cdr (reverse prev-defns))
-                #,@(if (null? prev-exprs)
-                       (list #'(void))
-                       (reverse prev-exprs))))]
+             ; TODO better error messages
+             (syntax-parse
+                 (list (reverse prev-stx-defns) (reverse prev-defns) (reverse prev-fields))
+                 [((stx-defn ...)
+                   (((~literal define-values) (method-name:id) ((~and their-lambda (~datum lambda)) (method-arg:id ...) method-body:expr ...)) ...)
+                   ; only 1 field definition allowed
+                   ((~optional ((~literal field) field-name:id ...) #:defaults ([(field-name 1) null]))))
+                  (define num-fields (length (attribute field-name)))
+                  (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
+                  #'(let ()
+                      ; this won't work if stx-defns need access to method names as regular procedures.
+                      stx-defn
+                      ...
+                      (letrec ([method-table
+                                (vector (lambda (this-arg method-arg ...)
+                                          ; to support class-level expressions that may call methods and fields,
+                                          ; this will have to be done around class-level expressions too
+                                          (let ([fields (object-fields this-arg)])
+                                            (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                                         ...)
+                                              (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                                method-body
+                                                ...))))
+                                        ...)]
+                               [constructor
+                                (lambda (field-name ...)
+                                  (object (vector field-name ...) cls))]
+                               [method-name->index
+                                (make-name->index (list #'method-name ...))]
+                               [cls
+                                (class-info method-name->index method-table constructor)])
+                        cls))]))]
            [(and (stx-pair? (car exprs))
                  (identifier? (stx-car (car exprs)))
                  (free-identifier=? #'define-syntaxes (stx-car (car exprs))))
             (loop (cdr exprs)
                   (cons (car exprs) prev-stx-defns)
                   prev-defns
-                  prev-exprs)]
+                  prev-fields)]
            [(and (stx-pair? (car exprs))
                  (identifier? (stx-car (car exprs)))
                  (free-identifier=? #'define-values (stx-car (car exprs))))
             (loop (cdr exprs)
                   prev-stx-defns
-                  (cons (car exprs)
-                        (append
-                         (map (lambda (expr)
-                                #`(define-values () (begin #,expr (values))))
-                              prev-exprs)
-                         prev-defns))
-                  null)]
-           [else (loop (cdr exprs)
-                       prev-stx-defns
-                       prev-defns
-                       (cons (car exprs) prev-exprs))]))))))
+                  (cons (car exprs) prev-defns)
+                  prev-fields)]
+           [(and (stx-pair? (car exprs))
+                 (identifier? (stx-car (car exprs)))
+                 (free-identifier=? #'field (stx-car (car exprs))))
+            (loop (cdr exprs)
+                  prev-stx-defns
+                  prev-defns
+                  (cons (car exprs) prev-fields))]
+           [else (error 'class "there should never be plain expressions at this point")]))))))
 
 (begin-for-syntax
   ; copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/private/intdef-util.rkt
