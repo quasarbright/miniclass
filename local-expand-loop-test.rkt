@@ -85,4 +85,15 @@
           (m x)
           (define (f) (my-add1 x)))))
     (define foo (new foo% 1))
-    (check-equal? (send foo f) 2)))
+    (check-equal? (send foo f) 2))
+  (test-case "shadow method name"
+    (define foo%
+      (let* ([f 42]
+             [foo% (class (define (f) 2))])
+        foo%))
+    (define foo (new foo%))
+    (let ([f 42])
+      ; I am surprised that this passes lol
+      ; I guess in this position, it's not a reference so it's not bound
+      ; and when the method table is created, it is also not bound
+      (check-equal? (send foo f) 2))))
