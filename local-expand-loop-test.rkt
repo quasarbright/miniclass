@@ -51,4 +51,28 @@
     (send counter inc)
     (send counter inc)
     (send counter inc)
-    (check-equal? (send counter get) 3)))
+    (check-equal? (send counter get) 3))
+  (test-case "use a macro that expands to a definition"
+    (define-syntax-rule (m x) (define x (lambda () 2)))
+    (define foo%
+      (class
+        (m x)))
+    (define foo (new foo%))
+    (check-equal? (send foo x) 2))
+  (test-case "use a macro that expands to field"
+    (define-syntax-rule (m x) (field x))
+    (define foo%
+      (class
+        (m x)
+        (define (f) (add1 x))))
+    (define foo (new foo% 1))
+    (check-equal? (send foo f) 2))
+  (test-case "define and use a macro inside of a class"
+    (define foo%
+      (class
+        (define-syntax-rule (m x) (field x))
+        (define-syntax-rule (my-add1 x) (add1 x))
+        (m x)
+        (define (f) (my-add1 x))))
+    (define foo (new foo% 1))
+    (check-equal? (send foo f) 2)))
