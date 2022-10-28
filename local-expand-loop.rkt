@@ -70,9 +70,6 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
 (define-syntax class
   (make-expression-transformer
    (lambda (stx)
-     ;; Body can have mixed exprs and defns. Wrap expressions with
-     ;; `(define-values () ... (values))' as needed, and add a (void)
-     ;; at the end if needed.
      (let* ([def-ctx (syntax-local-make-definition-context)]
             [ctx (generate-expand-context #t)]
             ;; [kernel-forms (kernel-form-identifier-list)]
@@ -86,19 +83,17 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
                  (reverse r)
                  (let ([expr (local-expand (car todo) ctx stoplist def-ctx)]
                        [todo (cdr todo)])
-                   ; TODO translate to syntax/parse
-                   (syntax-case expr (begin define-syntaxes define-values field)
+                   (syntax-parse expr
+                     #:literals (begin define-syntaxes define-values field)
                      [(begin . rest)
                       (loop (append (syntax->list #'rest) todo) r)]
-                     [(define-syntaxes (id ...) rhs)
-                      (andmap identifier? (syntax->list #'(id ...)))
+                     [(define-syntaxes (id:id ...) rhs)
                       (with-syntax ([rhs (local-transformer-expand
                                           #'rhs 'expression null)])
-                        (syntax-local-bind-syntaxes
-                         (syntax->list #'(id ...))
-                         #'rhs def-ctx)
-                        (with-syntax ([(id ...) (map syntax-local-identifier-as-binding
-                                                     (syntax->list #'(id ...)))])
+
+                        (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
+                                                                            #'rhs
+                                                                            def-ctx)])
                           (loop todo (cons (datum->syntax
                                             expr
                                             (list #'define-syntaxes #'(id ...) #'rhs)
@@ -107,29 +102,25 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
                                            r))))]
                      ; TODO check for lambda after translating to syntax/parse
                      ; but only if it's public (right now that's true by default)
-                     [(define-values (id ...) rhs)
-                      (andmap identifier? (syntax->list #'(id ...)))
-                      (let ([ids (syntax->list #'(id ...))])
-                        ; I actually don't think you want to bind these since they cannot be referenced in the usual way
-                        ; it might also interfere with the free-id equality check
+                     [(define-values (id:id ...) rhs)
+                      ; I actually don't think you want to bind these since they cannot be referenced in the usual way
+                      ; it might also interfere with the free-id equality check.
+                      (loop todo (cons (datum->syntax
+                                        expr
+                                        (list #'define-values #'(id ...) #'rhs)
+                                        expr
+                                        expr)
+                                       r))]
+                     [(field id:id ...)
+                      (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
                         (loop todo (cons (datum->syntax
                                           expr
-                                          (list #'define-values #'(id ...) #'rhs)
+                                          ; block does this slightly differently, be careful
+                                          #'(field id ...)
                                           expr
                                           expr)
                                          r)))]
-                     [(field id ...)
-                      (andmap identifier? (syntax->list #'(id ...)))
-                      (let ([ids (syntax->list #'(id ...))])
-                        (with-syntax ([(id ...) (syntax-local-bind-syntaxes ids #f def-ctx)])
-                          (loop todo (cons (datum->syntax
-                                            expr
-                                            ; block does this slightly differently, be careful
-                                            #'(field id ...)
-                                            expr
-                                            expr)
-                                           r))))]
-                     [else (raise-syntax-error #f "expressions are not allowed inside of a class body")]))))])
+                     [_ (raise-syntax-error #f "expressions are not allowed inside of a class body" this-syntax)]))))])
        (let loop ([exprs exprs]
                   ; list of (define-syntaxes ...) exprs
                   [prev-stx-defns null]
