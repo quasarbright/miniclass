@@ -156,8 +156,9 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
           'disappeared-binding 'disappeared-binding
           stx))))))
   ; expand the body of the class expression using the given definition context
-  ; returns a list of expanded class-level forms.
+  ; returns a list of (partially) expanded class-level forms.
   ; expands to just field declarations and definitions (of values and syntaxes).
+  ; does not expand rhs of define-values, only define-syntaxes.
   #;(syntax? definition-context? -> (listof syntax?))
   (define (local-expand-class-body stx def-ctx)
     (let*

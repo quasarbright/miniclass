@@ -96,4 +96,13 @@
       ; I am surprised that this passes lol
       ; I guess in this position, it's not a reference so it's not bound
       ; and when the method table is created, it is also not bound
-      (check-equal? (send foo f) 2))))
+      (check-equal? (send foo f) 2)))
+  #;; TODO uncomment once you can apply methods normally
+  (test-case "macro expands to a reference to a locally defined value"
+    (define foo%
+      (class
+        (define-syntax-rule (call-g) (g))
+        (define (g) 2)
+        (define (f) (call-g))))
+    (define foo (new foo%))
+    (check-equal? (send foo f) 2)))
