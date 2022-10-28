@@ -71,70 +71,8 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
   (make-expression-transformer
    (lambda (stx)
      (let ([def-ctx (syntax-local-make-definition-context)])
-       (let loop ([exprs (local-expand-class-body stx def-ctx)]
-                  ; list of (define-syntaxes ...) exprs
-                  [prev-stx-defns null]
-                  ; list of (define-values ...) exprs
-                  [prev-defns null]
-                  ; list of (field id ...) exprs
-                  [prev-fields null])
-         (syntax-parse exprs
-           [()
-            (add-decl-props
-             def-ctx
-             (append prev-stx-defns prev-defns)
-             ; TODO better error messages
-             ; here is the actual class logic, finally
-             (syntax-parse (list (reverse prev-stx-defns) (reverse prev-defns) (reverse prev-fields))
-               #:literals (define-values field)
-               [((stx-defn ...)
-                 ((define-values (method-name:id) ((~and their-lambda (~datum lambda)) (method-arg:id ...) method-body:expr ...)) ...)
-                 ; only 1 field definition allowed
-                 ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null]))))
-                (define num-fields (length (attribute field-name)))
-                (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
-                #'(let ()
-                    ; this won't work if stx-defns need access to method names as regular procedures.
-                    stx-defn
-                    ...
-                    (letrec ([method-table
-                              (vector (lambda (this-arg method-arg ...)
-                                        ; to support class-level expressions that may call methods and fields,
-                                        ; this will have to be done around class-level expressions too
-                                        (let ([fields (object-fields this-arg)])
-                                          (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                                       ...)
-                                            (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                              method-body
-                                              ...))))
-                                      ...)]
-                             [constructor
-                              (lambda (field-name ...)
-                                (object (vector field-name ...) cls))]
-                             [method-name->index
-                              (make-name->index (list #'method-name ...))]
-                             [cls
-                              (class-info method-name->index method-table constructor)])
-                      cls))]))]
-           [(expr . rest-exprs)
-            (syntax-parse #'expr
-              #:literals (define-syntaxes define-values field)
-              [(define-syntaxes . _)
-               (loop #'rest-exprs
-                     (cons #'expr prev-stx-defns)
-                     prev-defns
-                     prev-fields)]
-              [(define-values . _)
-               (loop #'rest-exprs
-                     prev-stx-defns
-                     (cons #'expr prev-defns)
-                     prev-fields)]
-              [(field . _)
-               (loop #'rest-exprs
-                     prev-stx-defns
-                     prev-defns
-                     (cons #'expr prev-fields))]
-              [_ (error 'class "there should never be plain expressions at this point")])]))))))
+       (let-values ([(stx-defns defns fields) (group-class-decls (local-expand-class-body stx def-ctx))])
+         (compile-class-body defns stx-defns fields def-ctx))))))
 
 (begin-for-syntax
   ; copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/private/intdef-util.rkt
@@ -155,11 +93,11 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
          (copy-prop
           'disappeared-binding 'disappeared-binding
           stx))))))
+  #;(syntax? definition-context? -> (listof syntax?))
   ; expand the body of the class expression using the given definition context
   ; returns a list of (partially) expanded class-level forms.
   ; expands to just field declarations and definitions (of values and syntaxes).
   ; does not expand rhs of define-values, only define-syntaxes.
-  #;(syntax? definition-context? -> (listof syntax?))
   (define (local-expand-class-body stx def-ctx)
     (let*
         ([ctx (generate-expand-context #t)]
@@ -210,7 +148,82 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
                                      expr
                                      expr)
                                     r)))]
-                [_ (raise-syntax-error #f "expressions are not allowed inside of a class body" this-syntax)])))))))
+                [_ (raise-syntax-error #f "expressions are not allowed inside of a class body" this-syntax)]))))))
+
+  #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?)))
+  ; accepts a list of partially expanded class-level definitions and returns them grouped into
+  ; syntax definitions, value definitions, and field declarations
+  (define (group-class-decls exprs)
+    (let loop ([exprs exprs]
+               ; list of (define-syntaxes ...) exprs
+               [prev-stx-defns null]
+               ; list of (define-values ...) exprs
+               [prev-defns null]
+               ; list of (field id ...) exprs
+               [prev-fields null])
+      (syntax-parse exprs
+        [(expr . rest-exprs)
+         (syntax-parse #'expr
+           #:literals (define-syntaxes define-values field)
+           [(define-syntaxes . _)
+            (loop #'rest-exprs
+                  (cons #'expr prev-stx-defns)
+                  prev-defns
+                  prev-fields)]
+           [(define-values . _)
+            (loop #'rest-exprs
+                  prev-stx-defns
+                  (cons #'expr prev-defns)
+                  prev-fields)]
+           [(field . _)
+            (loop #'rest-exprs
+                  prev-stx-defns
+                  prev-defns
+                  (cons #'expr prev-fields))]
+           [_ (error 'class "there should never be plain expressions at this point")])]
+        [() (values (reverse prev-stx-defns)
+                    (reverse prev-defns)
+                    (reverse prev-fields))])))
+
+  #;((listof syntax?) (listof syntax?) (listof syntax?) definition-context? -> syntax?)
+  ; compile the partially expanded class-level definitions into pure racket code.
+  ; This is the actual class logic.
+  (define (compile-class-body defns stx-defns fields def-ctx)
+    (add-decl-props
+     def-ctx
+     (append stx-defns defns)
+     ; TODO better error messages
+     (syntax-parse (list stx-defns defns fields)
+       #:literals (define-values field)
+       [((stx-defn ...)
+         ((define-values (method-name:id) ((~and their-lambda (~datum lambda)) (method-arg:id ...) method-body:expr ...)) ...)
+         ; only 1 field definition allowed
+         ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null]))))
+        (define num-fields (length (attribute field-name)))
+        (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
+        #'(let ()
+            ; this won't work if stx-defns need access to method names as regular procedures.
+            stx-defn
+            ...
+            (letrec ([method-table
+                      (vector (lambda (this-arg method-arg ...)
+                                ; to support class-level expressions that may call methods and fields,
+                                ; this will have to be done around class-level expressions too
+                                (let ([fields (object-fields this-arg)])
+                                  (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                               ...)
+                                    (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                      method-body
+                                      ...))))
+                              ...)]
+                     [constructor
+                      (lambda (field-name ...)
+                        (object (vector field-name ...) cls))]
+                     [method-name->index
+                      (make-name->index (list #'method-name ...))]
+                     [cls
+                      (class-info method-name->index method-table constructor)])
+              cls))]))))
 
 #;((listof identifier?) -> (identifier? -> natural?))
 ; Create a function that maps method names to their method table indices
