@@ -64,6 +64,24 @@ as you expand to definitions, you need to make bindings
 syntax-local-bind-syntaxes
 
 internal-definition-context-add-scopes for inside outside edge (block doens't do it)
+
+
+
+next steps:
+- bind method names and support references to them
+- support top-level expressions
+- bindingspec-style local expansion:
+  - instead of outputting define-syntax, local-expand value rhs with the def ctx that has the macros
+  - when you do that,
+    - something like #%host-expr, compile-binder!, compile-reference
+    - suspension and resumption
+    - bind surface names to transformers that ref a free id table that will end up mapping them to compiled names in the output code
+    - references will be the surface identifiers, so they'll expand via the transformer
+    - scope stuff for compile-binder!: you'll find out! something with syntax-local-get-shadower on the reference.
+    - for #%host-expr, wrap expr positions in #%host-expr and add a stx prop containing the def ctx.
+      #%host-expr will get that prop and local-expand its argument under that def ctx
+    - eventually, we'll replace local-expand with syntax-local-expand-expressoin to avoid re-expansion after outputting local-expanded code
+
 |#
 
 ; initially copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
@@ -104,7 +122,8 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
          [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda)]
          [init-exprs (let ([v (syntax->list stx)])
                        (unless v (raise-syntax-error #f "bad syntax" stx))
-                       (cdr v))])
+                       (map (λ (expr) (internal-definition-context-add-scopes def-ctx expr))
+                            (cdr v)))])
       (let loop ([todo init-exprs] [r '()])
         (if (null? todo)
             (reverse r)

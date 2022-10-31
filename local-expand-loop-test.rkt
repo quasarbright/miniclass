@@ -2,7 +2,7 @@
 
 ; tests classical.rkt
 
-(module+ test (require rackunit))
+(module+ test (require rackunit syntax/macro-testing))
 
 (require "./local-expand-loop.rkt")
 
@@ -105,4 +105,33 @@
         (define (g) 2)
         (define (f) (call-g))))
     (define foo (new foo%))
-    (check-equal? (send foo f) 2)))
+    (check-equal? (send foo f) 2))
+  (test-case "internal-definition-context-add-scopes regression test"
+    (define-syntax-rule (x) 'good)
+    (define-syntax-rule (m f) (define (f) (x)))
+    (define c%
+      (class
+        (define-syntax-rule (x) 'bad2)
+        (m f)))
+    (check-equal? (send (new c%) f) 'good))
+  #;; TODO uncomment once you have method references, but revise when you have top-level exprs lol
+  (test-case "method shadows macro"
+    (define-syntax-rule (m f) (define (f) 'bad))
+    (check-exn #rx"expressions are not allowed inside of a class body"
+               (lambda ()
+                 (convert-compile-time-error
+                  (class
+                    (define (m f) 'good)
+                    (m f))))))
+  #;;TODO uncomment one you have top-level expressions
+  (test-case "macro use before definition"
+    (define x #f)
+    (define foo%
+      (class
+        (m)
+        (define-syntax-rule (m) (set! x 1))))
+    (new foo%)
+    (check-equal? x 1)))
+; TODO test macro expanding to fresh method definnition and another surface definition of the same name
+; If you do symbol equality for methods, this should error.
+; Also will be weird for class-level references.
