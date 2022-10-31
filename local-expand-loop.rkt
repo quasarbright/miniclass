@@ -76,11 +76,19 @@ next steps:
     - something like #%host-expr, compile-binder!, compile-reference
     - suspension and resumption
     - bind surface names to transformers that ref a free id table that will end up mapping them to compiled names in the output code
-    - references will be the surface identifiers, so they'll expand via the transformer
+    - initially, this lookup would fail. But running something like compile-binder! on a binder would make an entry in the table.
+    - references will be the surface identifiers, so they'll expand via the transformer. No real need for compile-reference I think, since the transformer will take care of it.
     - scope stuff for compile-binder!: you'll find out! something with syntax-local-get-shadower on the reference.
     - for #%host-expr, wrap expr positions in #%host-expr and add a stx prop containing the def ctx.
       #%host-expr will get that prop and local-expand its argument under that def ctx
     - eventually, we'll replace local-expand with syntax-local-expand-expressoin to avoid re-expansion after outputting local-expanded code
+
+The current bindingspec-style method has quadratic re-expansions. If you have nested classes (inside of parents' expression positions),
+the first class' syntax local-expands and outputs syntax that needs to be re-expanded. Then, its parent local-expands, which re-expands the first class.
+Then, its parent local expands, which re-expands both classes. And so-on. You get triangular (quadratic) re-expansions.
+
+I forgot why eager expansion (expand rhs before compilation) wouldn't work. TODO ask michael again.
+I guess stuff like `this` can't be expanded eagerly
 
 |#
 
@@ -89,6 +97,7 @@ next steps:
   (make-expression-transformer
    (lambda (stx)
      (let ([def-ctx (syntax-local-make-definition-context)])
+       ; If this was going to get more complicated, I'd do more pre-processing into appropriate structured data
        (let-values ([(stx-defns defns fields) (group-class-decls (local-expand-class-body stx def-ctx))])
          (compile-class-body defns stx-defns fields def-ctx))))))
 
