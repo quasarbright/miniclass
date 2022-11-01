@@ -114,6 +114,22 @@
         (define-syntax-rule (x) 'bad2)
         (m f)))
     (check-equal? (send (new c%) f) 'good))
+  (test-case "duplicate method name error"
+    (check-exn #rx"a method with same name has already been defined"
+               (lambda ()
+                 (convert-syntax-error
+                  (class
+                    (define (f) 2)
+                    (define (f) 2))))))
+  (test-case "duplicate method name error, macro introduced"
+    (check-exn #rx"a method with same name has already been defined"
+               (lambda ()
+                 (convert-syntax-error
+                  (let ()
+                    (define-syntax-rule (m) (define (f) 2))
+                    (class
+                      (m)
+                      (define (f) 2)))))))
   #;; TODO uncomment once you have method references, but revise when you have top-level exprs lol
   (test-case "method shadows macro"
     (define-syntax-rule (m f) (define (f) 'bad))

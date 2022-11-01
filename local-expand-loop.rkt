@@ -68,7 +68,7 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
 
 
 next steps:
-- symbolic equality for method names
+- [x] symbolic equality for method names
   - uniqueness check
   - test macro-introduced binding and surface binding are considered equal and in conflict
 - bind method names and support references to them
@@ -227,9 +227,12 @@ I guess stuff like `this` can't be expanded eagerly
      (syntax-parse (list stx-defns defns fields)
        #:literals (define-values field)
        [((stx-defn ...)
-         ((define-values (method-name:id) ((~and their-lambda (~datum lambda)) (method-arg:id ...) method-body:expr ...)) ...)
+         ; I know ~datum for lambda is bad, but I don't know how to do this correctly
+         ; There are at least two distinct (by free-identifier=?) "lambda"s that could end up here
+         ((define-values (method-name:id) ((~datum lambda) (method-arg:id ...) method-body:expr ...)) ...)
          ; only 1 field definition allowed
          ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null]))))
+        (check-duplicate-method-names (attribute method-name))
         (define num-fields (length (attribute field-name)))
         (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
         #'(let ()
@@ -254,7 +257,17 @@ I guess stuff like `this` can't be expanded eagerly
                       (make-name->index (list #'method-name ...))]
                      [cls
                       (class-info method-name->index method-table constructor)])
-              cls))]))))
+              cls))])))
+  #;((listof identifier?) -> void?)
+  ; If there are (symbolically) duplicate method names, error
+  (define (check-duplicate-method-names names)
+    (let loop ([ids names] [seen-symbols '()])
+      (cond
+        [(null? ids) (void)]
+        [(member (syntax->datum (car ids)) seen-symbols)
+         (raise-syntax-error #f "a method with same name has already been defined" (car ids))]
+        [else
+         (loop (cdr ids) (cons (syntax->datum (car ids)) seen-symbols))]))))
 
 #;((listof identifier?) -> (identifier? -> natural?))
 ; Create a function that maps method names to their method table indices
