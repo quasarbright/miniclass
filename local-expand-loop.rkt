@@ -7,7 +7,7 @@
 (module+ test (require rackunit))
 (provide (all-defined-out))
 
-(require racket/stxparam racket/syntax syntax/id-table (for-syntax syntax/context syntax/intdef syntax/stx syntax/parse syntax/transformer))
+(require racket/stxparam (for-syntax syntax/context syntax/intdef syntax/parse syntax/transformer))
 
 (struct class-info [name->method-index method-table constructor])
 ; A ClassInfo is a (class-info (identifier -> natural) (any ... -> Object)) where
@@ -68,6 +68,9 @@ internal-definition-context-add-scopes for inside outside edge (block doens't do
 
 
 next steps:
+- symbolic equality for method names
+  - uniqueness check
+  - test macro-introduced binding and surface binding are considered equal and in conflict
 - bind method names and support references to them
 - support top-level expressions
 - bindingspec-style local expansion:
@@ -256,9 +259,11 @@ I guess stuff like `this` can't be expanded eagerly
 #;((listof identifier?) -> (identifier? -> natural?))
 ; Create a function that maps method names to their method table indices
 (define (make-name->index names)
-  (let ([table (make-immutable-free-id-table (map cons names (build-list (length names) identity)))])
+  (let ([table (make-hasheq (map (lambda (id index) (cons (syntax->datum id) index))
+                                 names
+                                 (build-list (length names) identity)))])
     (lambda (name)
-      (free-id-table-ref table name (lambda () (error 'send "no such method ~a" name))))))
+      (hash-ref table (syntax->datum name) (lambda () (error 'send "no such method ~a" name))))))
 
 (begin-for-syntax
   ; Creates a set!-transformer that accesses and mutates an elment of a vector
