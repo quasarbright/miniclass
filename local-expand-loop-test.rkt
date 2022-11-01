@@ -130,7 +130,34 @@
                     (class
                       (m)
                       (define (f) 2)))))))
-  #;; TODO uncomment once you have method references, but revise when you have top-level exprs lol
+  (test-case "method used as procedure"
+    (define foo%
+      (class
+        (define (f) 2)
+        (define (g) (f))))
+    (define foo (new foo%))
+    (check-equal? (send foo g) 2))
+  (test-case "method used as procedure with args"
+    (define foo%
+      (class
+        (define (f x y) (+ x y))
+        (define (g) (f 1 2))))
+    (define foo (new foo%))
+    (check-equal? (send foo g) 3))
+  (test-case "method used as reference"
+    (define foo%
+      (class
+        (define (f) 2)
+        (define (g) f)))
+    (define foo (new foo%))
+    (check-pred procedure? (send foo g)))
+  (test-case "method used in apply"
+    (define foo%
+      (class
+        (define (f x y) (+ x y))
+        (define (g) (apply f (list 1 2)))))
+    (define foo (new foo%))
+    (check-equal? (send foo g) 3))
   (test-case "method shadows macro"
     (define-syntax-rule (m f) (define (f) 'bad))
     (check-exn #rx"expressions are not allowed inside of a class body"
@@ -148,6 +175,3 @@
         (define-syntax-rule (m) (set! x 1))))
     (new foo%)
     (check-equal? x 1)))
-; TODO test macro expanding to fresh method definnition and another surface definition of the same name
-; If you do symbol equality for methods, this should error.
-; Also will be weird for class-level references.

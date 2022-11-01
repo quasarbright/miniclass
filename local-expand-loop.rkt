@@ -90,9 +90,9 @@ The current bindingspec-style method has quadratic re-expansions. If you have ne
 the first class' syntax local-expands and outputs syntax that needs to be re-expanded. Then, its parent local-expands, which re-expands the first class.
 Then, its parent local expands, which re-expands both classes. And so-on. You get triangular (quadratic) re-expansions.
 
-I forgot why eager expansion (expand rhs before compilation) wouldn't work. TODO ask michael again.
-I guess stuff like `this` can't be expanded eagerly
-
+Eager expansion (expand rhs before compilation) wouldn't work.
+- The syntax definitions get evaluated twice, which is inefficient and is really bad if they are effectful
+- They are evaluated once during syntax-local-bind-syntaxes, and again when the emitted letrec-syntaxes expands
 |#
 
 ; initially copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
@@ -232,28 +232,28 @@ I guess stuff like `this` can't be expanded eagerly
         (define num-fields (length (attribute field-name)))
         (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
         #'(let ()
-            (letrec-syntaxes+values ([(stx-name ...) stx-rhs]
-                                     ...)
-                                    ([(method-name) (make-variable-like-transformer #'(lambda args (send this method-name . args)))]
-                                     ...)
+            (letrec-syntaxes ([(stx-name ...) stx-rhs]
+                              ...
+                              [(method-name) (make-variable-like-transformer #'(lambda args (send this method-name . args)))]
+                              ...)
               (letrec ([method-table
-                     (vector (lambda (this-arg method-arg ...)
-                               ; to support class-level expressions that may call methods and fields,
-                               ; this will have to be done around class-level expressions too
-                               (let ([fields (object-fields this-arg)])
-                                 (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                              ...)
-                                   (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                     method-body
-                                     ...))))
-                             ...)]
-                    [constructor
-                     (lambda (field-name ...)
-                       (object (vector field-name ...) cls))]
-                    [method-name->index
-                     (make-name->index (list #'method-name ...))]
-                    [cls
-                     (class-info method-name->index method-table constructor)])
+                        (vector (lambda (this-arg method-arg ...)
+                                  ; to support class-level expressions that may call methods and fields,
+                                  ; this will have to be done around class-level expressions too
+                                  (let ([fields (object-fields this-arg)])
+                                    (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                                 ...)
+                                      (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                        method-body
+                                        ...))))
+                                ...)]
+                       [constructor
+                        (lambda (field-name ...)
+                          (object (vector field-name ...) cls))]
+                       [method-name->index
+                        (make-name->index (list #'method-name ...))]
+                       [cls
+                        (class-info method-name->index method-table constructor)])
                 cls)))])))
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
