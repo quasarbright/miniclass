@@ -7,7 +7,7 @@
 (module+ test (require rackunit))
 (provide (all-defined-out))
 
-(require racket/stxparam (for-syntax syntax/context syntax/intdef syntax/parse syntax/transformer))
+(require racket/stxparam syntax/transformer (for-syntax syntax/context syntax/intdef syntax/parse syntax/transformer))
 
 (struct class-info [name->method-index method-table constructor])
 ; A ClassInfo is a (class-info (identifier -> natural) (any ... -> Object)) where
@@ -158,18 +158,14 @@ I guess stuff like `this` can't be expanded eagerly
                                        expr
                                        expr)
                                       r))))]
-                ; TODO check for lambda after translating to syntax/parse
-                ; but only if it's public (right now that's true by default)
                 [(define-values (id:id ...) rhs)
-                 ; I actually don't think you want to bind these since they cannot be referenced in the usual way
-                 ; it might also interfere with the free-id equality check.
-                 ; this will be necessary if we want to allow methods to be called as procedures though.
-                 (loop todo (cons (datum->syntax
-                                   expr
-                                   (list #'define-values #'(id ...) #'rhs)
-                                   expr
-                                   expr)
-                                  r))]
+                 (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
+                   (loop todo (cons (datum->syntax
+                                     expr
+                                     (list #'define-values #'(id ...) #'rhs)
+                                     expr
+                                     expr)
+                                    r)))]
                 [(field id:id ...)
                  (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
                    (loop todo (cons (datum->syntax
@@ -226,7 +222,7 @@ I guess stuff like `this` can't be expanded eagerly
      ; TODO better error messages
      (syntax-parse (list stx-defns defns fields)
        #:literals (define-values field)
-       [((stx-defn ...)
+       [(((define-syntaxes (stx-name:id ...) stx-rhs:expr) ...)
          ; I know ~datum for lambda is bad, but I don't know how to do this correctly
          ; There are at least two distinct (by free-identifier=?) "lambda"s that could end up here
          ((define-values (method-name:id) ((~datum lambda) (method-arg:id ...) method-body:expr ...)) ...)
@@ -236,28 +232,29 @@ I guess stuff like `this` can't be expanded eagerly
         (define num-fields (length (attribute field-name)))
         (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
         #'(let ()
-            ; this won't work if stx-defns need access to method names as regular procedures.
-            stx-defn
-            ...
-            (letrec ([method-table
-                      (vector (lambda (this-arg method-arg ...)
-                                ; to support class-level expressions that may call methods and fields,
-                                ; this will have to be done around class-level expressions too
-                                (let ([fields (object-fields this-arg)])
-                                  (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                               ...)
-                                    (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                      method-body
-                                      ...))))
-                              ...)]
-                     [constructor
-                      (lambda (field-name ...)
-                        (object (vector field-name ...) cls))]
-                     [method-name->index
-                      (make-name->index (list #'method-name ...))]
-                     [cls
-                      (class-info method-name->index method-table constructor)])
-              cls))])))
+            (letrec-syntaxes+values ([(stx-name ...) stx-rhs]
+                                     ...)
+                                    ([(method-name) (make-variable-like-transformer #'(lambda args (send this method-name . args)))]
+                                     ...)
+              (letrec ([method-table
+                     (vector (lambda (this-arg method-arg ...)
+                               ; to support class-level expressions that may call methods and fields,
+                               ; this will have to be done around class-level expressions too
+                               (let ([fields (object-fields this-arg)])
+                                 (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                              ...)
+                                   (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                     method-body
+                                     ...))))
+                             ...)]
+                    [constructor
+                     (lambda (field-name ...)
+                       (object (vector field-name ...) cls))]
+                    [method-name->index
+                     (make-name->index (list #'method-name ...))]
+                    [cls
+                     (class-info method-name->index method-table constructor)])
+                cls)))])))
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)
@@ -291,9 +288,11 @@ I guess stuff like `this` can't be expanded eagerly
 (define-syntax send
   (syntax-parser
     [(_ obj:expr method-name:id arg:expr ...)
-     #'(send-rt obj #'method-name arg ...)]))
+     #'(send-rt obj #'method-name (list arg ...))]
+    [(_ obj:expr method-name:id . args)
+     #'(send-rt obj #'method-name args)]))
 
-(define (send-rt obj method-name-stx . args)
+(define (send-rt obj method-name-stx args)
   (let* ([cls (object-class obj)]
          [index ((class-info-name->method-index cls) method-name-stx)]
          [method-table (class-info-method-table cls)]
