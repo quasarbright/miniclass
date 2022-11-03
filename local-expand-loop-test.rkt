@@ -225,4 +225,14 @@
        (convert-compile-time-error
         (class
           (m)
-          (define-syntax-rule (m) (set! x 1))))))))
+          (define-syntax-rule (m) (set! x 1)))))))
+  ; I'm surprised this works, because if you locl expand a usage of a syntax paramter,
+  ; it gets expanded away. TODO figure out why this works
+  (test-case "class-level 'this'"
+    (define v 'bad)
+    (define foo%
+      (class
+        (define (f) (set! v 'good))
+        (send this f)))
+    (new foo%)
+    (check-equal? v 'good)))
