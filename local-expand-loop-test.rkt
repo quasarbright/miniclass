@@ -1,4 +1,4 @@
 #lang racket
 
-(require "bs-manual.rkt")
+(require "local-expand-loop.rkt")
 (include "tests.rktl")
