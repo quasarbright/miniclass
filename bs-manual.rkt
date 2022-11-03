@@ -149,10 +149,12 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                        expr)
                                       r))))]
                 [(define-values (id:id ...) rhs)
-                 ; TODO should you bind to the method transformer here? For bs style I think you need to
-                 #;(unless (= 1 (length (attribute id)))
-                   (raise-syntax-error ???))
-                 (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
+                 (unless (= 1 (length (attribute id)))
+                   (raise-syntax-error #f "each method must be defined separately" this-syntax))
+                 (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
+                                                                     #'(make-variable-like-transformer
+                                                                        #'(lambda args (send this method-name . args)))
+                                                                     def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr
                                      (list #'define-values #'(id ...) #'rhs)
