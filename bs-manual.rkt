@@ -151,13 +151,19 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                 [(define-values (id:id ...) rhs)
                  (unless (= 1 (length (attribute id)))
                    (raise-syntax-error #f "each method must be defined separately" this-syntax))
+                 (define/syntax-parse rhs^ (syntax-parse #'rhs
+                                             [((~and their-lambda (~datum lambda)) args body ...)
+                                              ; you have to expand the body separately
+                                              ; so you can detect lambda later
+                                              #`(their-lambda args #,(suspend-expr #'(begin body ...) def-ctx))]))
+                 ; bind method ids to transformers in the def-ctx
                  (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
                                                                      #'(make-variable-like-transformer
                                                                         #'(lambda args (send this method-name . args)))
                                                                      def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr
-                                     (list #'define-values #'(id ...) #'rhs)
+                                     (list #'define-values #'(id ...) #'rhs^)
                                      expr
                                      expr)
                                     r)))]
@@ -171,8 +177,16 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                      expr)
                                     r)))]
                 ; This is a plain top-level expression to be evaluated in the constructor
-                ; Leave as-is
-                [_ (loop todo (cons this-syntax r))]))))))
+                ; Just suspend
+                [_
+                 (define/syntax-parse e^ (suspend-expr this-syntax def-ctx))
+                 (loop todo (cons #'e^ r))]))))))
+
+  #;(syntax? definition-context? -> syntax?)
+  ; create a suspension which captures the internal definition context, which contains
+  ; bindings for syntax and method transformers
+  (define (suspend-expr stx def-ctx)
+    (syntax-property #`(#%host-expression #,stx) 'miniclass-def-ctx def-ctx))
 
   #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?) (listof syntax?)))
   ; accepts a list of partially expanded class-level definitions and returns them grouped into
@@ -283,6 +297,12 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
          (raise-syntax-error #f "a method with same name has already been defined" (car ids))]
         [else
          (loop (cdr ids) (cons (syntax->datum (car ids)) seen-symbols))]))))
+
+(define-syntax #%host-expression
+  (syntax-parser
+    [(_ e:expr)
+     (let ([def-ctx (syntax-property this-syntax 'miniclass-def-ctx)])
+       (local-expand #'e 'expression #f def-ctx))]))
 
 #;((listof identifier?) -> (identifier? -> natural?))
 ; Create a function that maps method names to their method table indices
