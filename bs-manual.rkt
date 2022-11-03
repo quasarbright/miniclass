@@ -121,7 +121,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (define (local-expand-class-body stx def-ctx)
     (let*
         ([ctx (generate-expand-context #t)]
-         [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda)]
+         [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda #'this)]
          [init-exprs (let ([v (syntax->list stx)])
                        (unless v (raise-syntax-error #f "bad syntax" stx))
                        (map (λ (expr) (internal-definition-context-add-scopes def-ctx expr))
@@ -150,6 +150,8 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                       r))))]
                 [(define-values (id:id ...) rhs)
                  ; TODO should you bind to the method transformer here? For bs style I think you need to
+                 #;(unless (= 1 (length (attribute id)))
+                   (raise-syntax-error ???))
                  (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr

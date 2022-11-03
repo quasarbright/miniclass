@@ -225,7 +225,9 @@
           (m)
           (define-syntax-rule (m) (set! x 1)))))))
   ; I'm surprised this works, because if you locl expand a usage of a syntax paramter,
-  ; it gets expanded away. TODO figure out why this works
+  ; it gets expanded away.
+  ; The reason it works is because send expands to a #%app, which doesn't expand
+  ; its arguments in a local expand with a stoplist.
   (test-case "class-level 'this'"
     (define v 'bad)
     (define foo%
@@ -233,4 +235,12 @@
         (define (f) (set! v 'good))
         (send this f)))
     (new foo%)
-    (check-equal? v 'good)))
+    (check-equal? v 'good))
+  (test-case "class-level 'this' alone"
+    (define v 'bad)
+    (define foo%
+      (class
+        (define (f) (set! v 'good))
+        this))
+    (new foo%)
+    (void)))

@@ -235,4 +235,12 @@
         (define (f) (set! v 'good))
         (send this f)))
     (new foo%)
-    (check-equal? v 'good)))
+    (check-equal? v 'good))
+  (test-case "class-level 'this' alone"
+    (define v 'bad)
+    (define foo%
+      (class
+        (define (f) (set! v 'good))
+        this))
+    (new foo%)
+    (void)))
