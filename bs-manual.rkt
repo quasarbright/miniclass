@@ -1,8 +1,9 @@
 #lang racket
 
-; This file is a "local-expand loop" style implementation of a small class system.
-; Similar to the implementation of the 'block' macro.
-; This improves over the simple implementation by allowing class-level macro uses and definitions.
+; This file is a bindingspec style implementation of a small class system.
+; It does what bindingspec does, but by hand.
+; This improves over the local expand loop style by not re-evaluating syntax definitions
+; However, it can potentially lead to quadratic re-expansions
 
 (module+ test (require rackunit))
 (provide (all-defined-out))
@@ -50,29 +51,7 @@
 (define-class-syntax-parameters this this%)
 
 #|
-before matching, local expand with stop-words field and define-values, then analyze
-
-also support define-syntaxes in the class (another stop-name)
-
-consult block macro that michael sent you!!!
-https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
-
-scoping rules too
-
-as you expand to definitions, you need to make bindings
-
-syntax-local-bind-syntaxes
-
-internal-definition-context-add-scopes for inside outside edge (block doens't do it)
-
-
-
 next steps:
-- [x] symbolic equality for method names
-  - uniqueness check
-  - test macro-introduced binding and surface binding are considered equal and in conflict
-- [x] bind method names and support references to them
-- [x] support top-level expressions
 - bindingspec-style local expansion:
   - instead of outputting define-syntax, local-expand value rhs with the def ctx that has the macros
   - when you do that,
@@ -133,6 +112,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
          (copy-prop
           'disappeared-binding 'disappeared-binding
           stx))))))
+
   #;(syntax? definition-context? -> (listof syntax?))
   ; expand the body of the class expression using the given definition context
   ; returns a list of (partially) expanded class-level forms.
@@ -169,6 +149,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                        expr)
                                       r))))]
                 [(define-values (id:id ...) rhs)
+                 ; TODO should you bind to the method transformer here? For bs style I think you need to
                  (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr

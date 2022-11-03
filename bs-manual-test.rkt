@@ -1,7 +1,5 @@
 #lang racket
 
-; tests classical.rkt
-
 (module+ test (require rackunit syntax/macro-testing))
 
 (require "./bs-manual.rkt")
@@ -97,7 +95,6 @@
       ; I guess in this position, it's not a reference so it's not bound
       ; and when the method table is created, it is also not bound
       (check-equal? (send foo f) 2)))
-  #;; TODO uncomment once you can apply methods normally
   (test-case "macro expands to a reference to a locally defined value"
     (define foo%
       (class
