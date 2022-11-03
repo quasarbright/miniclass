@@ -247,3 +247,9 @@
              (define-syntax-rule (m) this)
              (set! v (m)))))
     (check-equal? foo v)))
+(void (class
+        (define-syntax m
+          (let ()
+            (displayln "Side effect in a syntax definition!")
+            (lambda (stx) #'42)))
+        (m)))
