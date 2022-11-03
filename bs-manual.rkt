@@ -157,6 +157,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                               ; so you can detect lambda later
                                               #`(their-lambda args #,(suspend-expr #'(begin body ...) def-ctx))]))
                  ; bind method ids to transformers in the def-ctx
+                 (define/syntax-parse (method-name) #'(id ...))
                  (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
                                                                      #'(make-variable-like-transformer
                                                                         #'(lambda args (send this method-name . args)))
@@ -186,7 +187,9 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   ; create a suspension which captures the internal definition context, which contains
   ; bindings for syntax and method transformers
   (define (suspend-expr stx def-ctx)
-    (syntax-property #`(#%host-expression #,stx) 'miniclass-def-ctx def-ctx))
+    ; wrap ctx in a pair because #f is valid as ctx but not as a syntax
+    ; property value.
+    (syntax-property #`(#%host-expression #,stx) 'miniclass-def-ctx (list def-ctx)))
 
   #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?) (listof syntax?)))
   ; accepts a list of partially expanded class-level definitions and returns them grouped into
@@ -254,39 +257,35 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
         (define num-fields (length (attribute field-name)))
         (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
         #'(let ()
-            (letrec-syntaxes ([(stx-name ...) stx-rhs]
-                              ...
-                              [(method-name) (make-variable-like-transformer #'(lambda args (send this method-name . args)))]
-                              ...)
-              (letrec ([method-table
-                        (vector (lambda (this-arg method-arg ...)
-                                  ; to support class-level expressions that may call methods and fields,
-                                  ; this will have to be done around class-level expressions too
-                                  (let ([fields (object-fields this-arg)])
-                                    (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                                 ...)
-                                      (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                        method-body
-                                        ...))))
-                                ...)]
-                       [constructor
-                        (lambda (field-name ...)
-                          (let ([this-val (object (vector field-name ...) cls)])
-                            (let ([fields (object-fields this-val)])
-                              (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                           ...)
-                                (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-                                  ; I'm just putting this here to ensure that the body is non-empty
-                                  ; That's ok, right?
-                                  (void)
-                                  expr
-                                  ...)))
-                            this-val))]
-                       [method-name->index
-                        (make-name->index (list #'method-name ...))]
-                       [cls
-                        (class-info method-name->index method-table constructor)])
-                cls)))])))
+            (letrec ([method-table
+                      (vector (lambda (this-arg method-arg ...)
+                                ; to support class-level expressions that may call methods and fields,
+                                ; this will have to be done around class-level expressions too
+                                (let ([fields (object-fields this-arg)])
+                                  (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                               ...)
+                                    (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                      method-body
+                                      ...))))
+                              ...)]
+                     [constructor
+                      (lambda (field-name ...)
+                        (let ([this-val (object (vector field-name ...) cls)])
+                          (let ([fields (object-fields this-val)])
+                            (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                         ...)
+                              (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+                                ; I'm just putting this here to ensure that the body is non-empty
+                                ; That's ok, right?
+                                (void)
+                                expr
+                                ...)))
+                          this-val))]
+                     [method-name->index
+                      (make-name->index (list #'method-name ...))]
+                     [cls
+                      (class-info method-name->index method-table constructor)])
+              cls))])))
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)
@@ -301,8 +300,12 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
 (define-syntax #%host-expression
   (syntax-parser
     [(_ e:expr)
-     (let ([def-ctx (syntax-property this-syntax 'miniclass-def-ctx)])
-       (local-expand #'e 'expression #f def-ctx))]))
+     (let ([def-ctx (car (syntax-property this-syntax 'miniclass-def-ctx))])
+       ; ctx needs to be empty instead of #f because we need to
+       ; recursively expand subexpressions. We need to expand references of bindings
+       ; defined in the def-ctx now because the bindings will disappear later.
+       ; If you provide #f, local-expand doesn't expand subexpressions
+       (local-expand #'e 'expression '() def-ctx))]))
 
 #;((listof identifier?) -> (identifier? -> natural?))
 ; Create a function that maps method names to their method table indices
