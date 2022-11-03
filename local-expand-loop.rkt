@@ -71,8 +71,8 @@ next steps:
 - [x] symbolic equality for method names
   - uniqueness check
   - test macro-introduced binding and surface binding are considered equal and in conflict
-- bind method names and support references to them
-- support top-level expressions
+- [x] bind method names and support references to them
+- [x] support top-level expressions
 - bindingspec-style local expansion:
   - instead of outputting define-syntax, local-expand value rhs with the def ctx that has the macros
   - when you do that,
@@ -93,6 +93,16 @@ Then, its parent local expands, which re-expands both classes. And so-on. You ge
 Eager expansion (expand rhs before compilation) wouldn't work.
 - The syntax definitions get evaluated twice, which is inefficient and is really bad if they are effectful
 - They are evaluated once during syntax-local-bind-syntaxes, and again when the emitted letrec-syntaxes expands
+
+Currently, you have to choose between:
+- macro transformers being evaluated twice (bind macros in pass 1 for definition-emitting macros, and re-emit them in the output syntax so
+"phase 2" (expansion of emitted syntax) has access to them to expand method rhs and top-level exprs)
+- quadratic re-expansion with bindingspec-style suspensions
+
+the syntax-local-expand-expression change will allow us to create opaque suspensions with access to transformers that will only get expanded once, never local-expanded
+We will get the best of both worlds.
+Macro definitions won't have to be emitted, so they'll only be evaluated once when the suspension is created.
+And we won't have to local-expand suspensions, they'll just expand with the transformers in context.
 |#
 
 ; initially copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
@@ -101,8 +111,8 @@ Eager expansion (expand rhs before compilation) wouldn't work.
    (lambda (stx)
      (let ([def-ctx (syntax-local-make-definition-context)])
        ; If this was going to get more complicated, I'd do more pre-processing into appropriate structured data
-       (let-values ([(stx-defns defns fields) (group-class-decls (local-expand-class-body stx def-ctx))])
-         (compile-class-body defns stx-defns fields def-ctx))))))
+       (let-values ([(stx-defns defns fields exprs) (group-class-decls (local-expand-class-body stx def-ctx))])
+         (compile-class-body defns stx-defns fields exprs def-ctx))))))
 
 (begin-for-syntax
   ; copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/private/intdef-util.rkt
@@ -175,11 +185,13 @@ Eager expansion (expand rhs before compilation) wouldn't work.
                                      expr
                                      expr)
                                     r)))]
-                [_ (raise-syntax-error #f "expressions are not allowed inside of a class body" this-syntax)]))))))
+                ; This is a plain top-level expression to be evaluated in the constructor
+                ; Leave as-is
+                [_ (loop todo (cons this-syntax r))]))))))
 
-  #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?)))
+  #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?) (listof syntax?)))
   ; accepts a list of partially expanded class-level definitions and returns them grouped into
-  ; syntax definitions, value definitions, and field declarations
+  ; syntax definitions, value definitions, field declarations, and top-level exprs
   (define (group-class-decls exprs)
     (let loop ([exprs exprs]
                ; list of (define-syntaxes ...) exprs
@@ -187,7 +199,8 @@ Eager expansion (expand rhs before compilation) wouldn't work.
                ; list of (define-values ...) exprs
                [prev-defns null]
                ; list of (field id ...) exprs
-               [prev-fields null])
+               [prev-fields null]
+               [prev-exprs null])
       (syntax-parse exprs
         [(expr . rest-exprs)
          (syntax-parse #'expr
@@ -196,38 +209,48 @@ Eager expansion (expand rhs before compilation) wouldn't work.
             (loop #'rest-exprs
                   (cons #'expr prev-stx-defns)
                   prev-defns
-                  prev-fields)]
+                  prev-fields
+                  prev-exprs)]
            [(define-values . _)
             (loop #'rest-exprs
                   prev-stx-defns
                   (cons #'expr prev-defns)
-                  prev-fields)]
+                  prev-fields
+                  prev-exprs)]
            [(field . _)
             (loop #'rest-exprs
                   prev-stx-defns
                   prev-defns
-                  (cons #'expr prev-fields))]
-           [_ (error 'class "there should never be plain expressions at this point")])]
+                  (cons #'expr prev-fields)
+                  prev-exprs)]
+           [_
+            (loop #'rest-exprs
+                  prev-stx-defns
+                  prev-defns
+                  prev-fields
+                  (cons #'expr prev-exprs))])]
         [() (values (reverse prev-stx-defns)
                     (reverse prev-defns)
-                    (reverse prev-fields))])))
+                    (reverse prev-fields)
+                    (reverse prev-exprs))])))
 
-  #;((listof syntax?) (listof syntax?) (listof syntax?) definition-context? -> syntax?)
+  #;((listof syntax?) (listof syntax?) (listof syntax?) (listof syntax?) definition-context? -> syntax?)
   ; compile the partially expanded class-level definitions into pure racket code.
   ; This is the actual class logic.
-  (define (compile-class-body defns stx-defns fields def-ctx)
+  (define (compile-class-body defns stx-defns fields exprs def-ctx)
     (add-decl-props
      def-ctx
      (append stx-defns defns)
      ; TODO better error messages
-     (syntax-parse (list stx-defns defns fields)
+     (syntax-parse (list stx-defns defns fields exprs)
        #:literals (define-values field)
        [(((define-syntaxes (stx-name:id ...) stx-rhs:expr) ...)
          ; I know ~datum for lambda is bad, but I don't know how to do this correctly
          ; There are at least two distinct (by free-identifier=?) "lambda"s that could end up here
          ((define-values (method-name:id) ((~datum lambda) (method-arg:id ...) method-body:expr ...)) ...)
          ; only 1 field definition allowed
-         ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null]))))
+         ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
+         (expr ...))
         (check-duplicate-method-names (attribute method-name))
         (define num-fields (length (attribute field-name)))
         (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
@@ -249,7 +272,17 @@ Eager expansion (expand rhs before compilation) wouldn't work.
                                 ...)]
                        [constructor
                         (lambda (field-name ...)
-                          (object (vector field-name ...) cls))]
+                          (let ([this-val (object (vector field-name ...) cls)])
+                            (let ([fields (object-fields this-val)])
+                              (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                           ...)
+                                (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+                                  ; I'm just putting this here to ensure that the body is non-empty
+                                  ; That's ok, right?
+                                  (void)
+                                  expr
+                                  ...)))
+                            this-val))]
                        [method-name->index
                         (make-name->index (list #'method-name ...))]
                        [cls

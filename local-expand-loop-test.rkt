@@ -158,20 +158,72 @@
         (define (g) (apply f (list 1 2)))))
     (define foo (new foo%))
     (check-equal? (send foo g) 3))
+  (test-case "class-level expr"
+    (define v 'bad)
+    (define foo%
+      (class
+        (set! v 'good)))
+    (new foo%)
+    (check-equal? v 'good))
+  (test-case "multiple class-level exprs"
+    (define v 0)
+    (define foo%
+      (class
+        (set! v (add1 v))
+        (set! v (add1 v))))
+    (new foo%)
+    (check-equal? v 2))
+  (test-case "multiple class-level exprs"
+    (define v 0)
+    (define foo%
+      (class
+        (set! v (add1 v))
+        (set! v (add1 v))))
+    (new foo%)
+    (check-equal? v 2))
+  (test-case "class-level field usage"
+    (define foo%
+      (class
+        (field v)
+        (set! v 'good)
+        (define (get-v) v)))
+    (define foo (new foo% #f))
+    (check-equal? (send foo get-v) 'good))
+  (test-case "class-level method usage"
+    (define v 'bad)
+    (define foo%
+      (class
+        (define (m) (set! v 'good))
+        (m)))
+    (new foo%)
+    (check-equal? v 'good))
   (test-case "method shadows macro"
-    (define-syntax-rule (m f) (define (f) 'bad))
-    (check-exn #rx"expressions are not allowed inside of a class body"
-               (lambda ()
-                 (convert-compile-time-error
-                  (class
-                    (define (m f) 'good)
-                    (m f))))))
-  #;;TODO uncomment one you have top-level expressions
-  (test-case "macro use before definition"
-    (define x #f)
+    (define v #f)
+    (define-syntax-rule (m e ...) (set! v 'bad))
+    (define foo%
+      (class
+        (define (m) (set! v 'good))
+        (m)))
+    (new foo%)
+    (check-equal? v 'good))
+  (test-case "method shadows macro after use"
+    ; I was surprised, but racket class works this way too!
+    ; The expansion depends on the order
+    ; Makes sense since the expr is actually expanded before the method is bound
+    (define v #f)
+    (define-syntax-rule (m e ...) (set! v 'good))
     (define foo%
       (class
         (m)
-        (define-syntax-rule (m) (set! x 1))))
+        (define (m) (set! v 'bad))))
     (new foo%)
-    (check-equal? x 1)))
+    (check-equal? v 'good))
+  (test-case "local macro use before definition"
+    ; this error is weird, but it's the same behavior as module-level racket
+    (check-exn
+     #rx"use does not match pattern"
+     (lambda ()
+       (convert-compile-time-error
+        (class
+          (m)
+          (define-syntax-rule (m) (set! x 1))))))))
