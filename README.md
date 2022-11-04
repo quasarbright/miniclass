@@ -50,3 +50,4 @@ Problems with this implementation:
 `bs-manual-eager` is like `bs-manual`, but immediately expands expression positions instead of creating suspensions.
 Additionally, rather than purely using syntax parameters for `this`, dynamic parameters are used under the hood to allow eager
 expansion of syntax parameter references. 
+I did this just to see if it was possible. No advantages over non-eager that I can think of.
