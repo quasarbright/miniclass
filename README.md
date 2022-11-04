@@ -36,7 +36,7 @@ during the expansion of emitted syntax since the syntax definitions end up in th
 
 ## bindingspec style
 
-`bs-style` is similar to what bindingspec does. To avoid re-evaluation of transformers, we create suspensions that capture the definition context which
+`bs-manual` is similar to what bindingspec does. To avoid re-evaluation of transformers, we create suspensions that capture the definition context which
 includes the bindings for the transformers. Instead of emitting syntax definitions for expansion of method bodies, we suspend them with this context such that
 when they are expanded, they are local-expanded under the stored definition context which includes the transformer bindings. This reduces the size of the expanded
 code and avoids re-evaluating transformers.
@@ -44,3 +44,9 @@ code and avoids re-evaluating transformers.
 Problems with this implementation:
 
 - Since method bodies get local-expanded and then re-expanded after emission, nested classes can lead to quadratic re-expansions
+
+## bindingspec eager style
+
+`bs-manual-eager` is like `bs-manual`, but immediately expands expression positions instead of creating suspensions.
+Additionally, rather than purely using syntax parameters for `this`, dynamic parameters are used under the hood to allow eager
+expansion of syntax parameter references. 
