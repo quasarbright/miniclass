@@ -1,4 +1,9 @@
-(module+ test (require rackunit syntax/macro-testing))
+(module+ test
+  (require (rename-in rackunit [test-case their-test-case]) syntax/macro-testing)
+  ;;; left off here about to wrap test-case in convert-compile-time-error
+  (define-syntax-rule
+    (test-case desc body ...)
+    (their-test-case desc (convert-compile-time-error (let () body ...)))))
 
 (module+ test
   (test-case "simple class"
