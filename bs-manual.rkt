@@ -55,23 +55,28 @@ next steps:
 - bindingspec-style local expansion:
   - instead of outputting define-syntax, local-expand value rhs with the def ctx that has the macros
   - when you do that,
-    - something like #%host-expr, compile-binder!, compile-reference
-    - suspension and resumption
-    - bind surface names to transformers that ref a free id table that will end up mapping them to compiled names in the output code
-    - initially, this lookup would fail. But running something like compile-binder! on a binder would make an entry in the table.
-    - references will be the surface identifiers, so they'll expand via the transformer. No real need for compile-reference I think, since the transformer will take care of it.
-    - scope stuff for compile-binder!: you'll find out! something with syntax-local-get-shadower on the reference.
-    - for #%host-expr, wrap expr positions in #%host-expr and add a stx prop containing the def ctx.
-      #%host-expr will get that prop and local-expand its argument under that def ctx
+    - [x] something like #%host-expr, compile-binder!, compile-reference. Only needed #%host-expr
+    - [x] suspension and resumption
+    - [x] bind surface names to transformers that ref a free id table that will end up mapping them to compiled names in the output code. Don't need it.
+    - [x] initially, this lookup would fail. But running something like compile-binder! on a binder would make an entry in the table.
+    - [x] references will be the surface identifiers, so they'll expand via the transformer. No real need for compile-reference I think, since the transformer will take care of it.
+    - [x] scope stuff for compile-binder!: you'll find out! something with syntax-local-get-shadower on the reference.
+    - [x] for #%host-expr, wrap expr positions in #%host-expr and add a stx prop containing the def ctx.
+          #%host-expr will get that prop and local-expand its argument under that def ctx
     - eventually, we'll replace local-expand with syntax-local-expand-expressoin to avoid re-expansion after outputting local-expanded code
+
 
 The current bindingspec-style method has quadratic re-expansions. If you have nested classes (inside of parents' expression positions),
 the first class' syntax local-expands and outputs syntax that needs to be re-expanded. Then, its parent local-expands, which re-expands the first class.
 Then, its parent local expands, which re-expands both classes. And so-on. You get triangular (quadratic) re-expansions.
 
-Eager expansion (expand rhs before compilation) wouldn't work.
 - The syntax definitions get evaluated twice, which is inefficient and is really bad if they are effectful
 - They are evaluated once during syntax-local-bind-syntaxes, and again when the emitted letrec-syntaxes expands
+
+Eager expansion (expand rhs before compilation) wouldn't work.
+I don't remember why, and I'm not convinced it doesn't
+TODO try eager expansion under def ctx
+Even if it does work, you'd want syntax-local-expand-expression change to avoid quadratic re-expansion
 
 Currently, you have to choose between:
 - macro transformers being evaluated twice (bind macros in pass 1 for definition-emitting macros, and re-emit them in the output syntax so
@@ -90,8 +95,8 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
    (lambda (stx)
      (let ([def-ctx (syntax-local-make-definition-context)])
        ; If this was going to get more complicated, I'd do more pre-processing into appropriate structured data
-       (let-values ([(stx-defns defns fields exprs) (group-class-decls (local-expand-class-body stx def-ctx))])
-         (compile-class-body defns stx-defns fields exprs def-ctx))))))
+       (let-values ([(defns fields exprs) (group-class-decls (local-expand-class-body stx def-ctx))])
+         (compile-class-body defns fields exprs def-ctx))))))
 
 (begin-for-syntax
   ; copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/private/intdef-util.rkt
@@ -142,12 +147,8 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                    (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
                                                                        #'rhs
                                                                        def-ctx)])
-                     (loop todo (cons (datum->syntax
-                                       expr
-                                       (list #'define-syntaxes #'(id ...) #'rhs)
-                                       expr
-                                       expr)
-                                      r))))]
+                     ; don't care about syntax defns after pass1
+                     (loop todo r)))]
                 [(define-values (id:id ...) rhs)
                  (unless (= 1 (length (attribute id)))
                    (raise-syntax-error #f "each method must be defined separately" this-syntax))
@@ -183,6 +184,58 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                  (define/syntax-parse e^ (suspend-expr this-syntax def-ctx))
                  (loop todo (cons #'e^ r))]))))))
 
+  #;((listof syntax?) internal-definition-context? -> (listof syntax?))
+  #;(define (local-expand-class-body/pass-2 exprs def-ctx)
+    (for/list ([expr exprs])
+      (syntax-parse expr
+        #:literals (define-syntaxes define-values field)
+        [(define-syntaxes (id:id ...) rhs)
+         ; bind ids to transformers in the def-ctx
+         (with-syntax ([rhs (local-transformer-expand #'rhs 'expression null)])
+           (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
+                                                               #'rhs
+                                                               def-ctx)])
+             (loop todo (cons (datum->syntax
+                               expr
+                               (list #'define-syntaxes #'(id ...) #'rhs)
+                               expr
+                               expr)
+                              r))))]
+        [(define-values (id:id ...) rhs)
+         (unless (= 1 (length (attribute id)))
+           (raise-syntax-error #f "each method must be defined separately" this-syntax))
+         (define/syntax-parse rhs^ (syntax-parse #'rhs
+                                     [((~and their-lambda (~datum lambda)) args body ...)
+                                      ; you have to expand the body separately
+                                      ; so you can detect lambda later
+                                      #`(their-lambda args #,(suspend-expr #'(begin body ...) def-ctx))]))
+         ; bind method ids to transformers in the def-ctx
+         (define/syntax-parse (method-name) #'(id ...))
+         (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
+                                                             #'(make-variable-like-transformer
+                                                                #'(lambda args (send this method-name . args)))
+                                                             def-ctx)])
+           (loop todo (cons (datum->syntax
+                             expr
+                             (list #'define-values #'(id ...) #'rhs^)
+                             expr
+                             expr)
+                            r)))]
+        [(field id:id ...)
+         (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
+           (loop todo (cons (datum->syntax
+                             expr
+                             ; block does this slightly differently, be careful
+                             #'(field id ...)
+                             expr
+                             expr)
+                            r)))]
+        ; This is a plain top-level expression to be evaluated in the constructor
+        ; Just suspend
+        [_
+         (define/syntax-parse e^ (suspend-expr this-syntax def-ctx))
+         (loop todo (cons #'e^ r))])))
+
   #;(syntax? definition-context? -> syntax?)
   ; create a suspension which captures the internal definition context, which contains
   ; bindings for syntax and method transformers
@@ -191,13 +244,11 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
     ; property value.
     (syntax-property #`(#%host-expression #,stx) 'miniclass-def-ctx (list def-ctx)))
 
-  #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?) (listof syntax?)))
+  #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?)))
   ; accepts a list of partially expanded class-level definitions and returns them grouped into
   ; syntax definitions, value definitions, field declarations, and top-level exprs
   (define (group-class-decls exprs)
     (let loop ([exprs exprs]
-               ; list of (define-syntaxes ...) exprs
-               [prev-stx-defns null]
                ; list of (define-values ...) exprs
                [prev-defns null]
                ; list of (field id ...) exprs
@@ -206,48 +257,37 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
       (syntax-parse exprs
         [(expr . rest-exprs)
          (syntax-parse #'expr
-           #:literals (define-syntaxes define-values field)
-           [(define-syntaxes . _)
-            (loop #'rest-exprs
-                  (cons #'expr prev-stx-defns)
-                  prev-defns
-                  prev-fields
-                  prev-exprs)]
+           #:literals (define-values field)
            [(define-values . _)
             (loop #'rest-exprs
-                  prev-stx-defns
                   (cons #'expr prev-defns)
                   prev-fields
                   prev-exprs)]
            [(field . _)
             (loop #'rest-exprs
-                  prev-stx-defns
                   prev-defns
                   (cons #'expr prev-fields)
                   prev-exprs)]
            [_
             (loop #'rest-exprs
-                  prev-stx-defns
                   prev-defns
                   prev-fields
                   (cons #'expr prev-exprs))])]
-        [() (values (reverse prev-stx-defns)
-                    (reverse prev-defns)
+        [() (values (reverse prev-defns)
                     (reverse prev-fields)
                     (reverse prev-exprs))])))
 
-  #;((listof syntax?) (listof syntax?) (listof syntax?) (listof syntax?) definition-context? -> syntax?)
+  #;((listof syntax?) (listof syntax?) (listof syntax?) internal-definition-context? -> syntax?)
   ; compile the partially expanded class-level definitions into pure racket code.
   ; This is the actual class logic.
-  (define (compile-class-body defns stx-defns fields exprs def-ctx)
+  (define (compile-class-body defns fields exprs def-ctx)
     (add-decl-props
      def-ctx
-     (append stx-defns defns)
+     (append defns)
      ; TODO better error messages
-     (syntax-parse (list stx-defns defns fields exprs)
+     (syntax-parse (list defns fields exprs)
        #:literals (define-values field)
-       [(((define-syntaxes (stx-name:id ...) stx-rhs:expr) ...)
-         ; I know ~datum for lambda is bad, but I don't know how to do this correctly
+       [(; I know ~datum for lambda is bad, but I don't know how to do this correctly
          ; There are at least two distinct (by free-identifier=?) "lambda"s that could end up here
          ((define-values (method-name:id) ((~datum lambda) (method-arg:id ...) method-body:expr ...)) ...)
          ; only 1 field definition allowed
