@@ -211,18 +211,17 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
          (local-expand-class-expression this-syntax def-ctx)])))
 
   #;(syntax? internal-definition-context? -> syntax?)
-  ; Expand syntax in an expression position inside of a class body.
+  ; Fully expand syntax in an expression position inside of a class body.
   ; The definition context contains transformer bindings for methods and locally defined
-  ; macros
+  ; macros.
   (define (local-expand-class-expression stx def-ctx)
-    ;;; left off here
-    ; it seems like the only way to expand macro references away is to pass an empty list
-    ; otherwise, it doesn't go inside of everything.
-    ; But then we can't stop on this or this%
-    ; hmmm
-    ; you could probably get away with syntax parameterizing this with a reference to a runtime parameter
-    ; and just doing regular parameterize in the compiler.
-    (local-expand stx 'expression '()#;(list #'this #'this%) def-ctx))
+    ; this syntax-parameterize is necessary because references to the stxparams are about to be expanded away.
+    (local-expand #`(syntax-parameterize ([this (make-variable-like-transformer #'(this-parameter))]
+                                          [this% (make-variable-like-transformer #'(this%-parameter))])
+                      #,stx)
+                  'expression
+                  '()
+                  def-ctx))
 
   #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?)))
   ; accepts a list of partially expanded class-level definitions and returns them grouped into
@@ -269,7 +268,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
        #:literals (define-values field)
        [(; I know ~datum for lambda is bad, but I don't know how to do this correctly
          ; There are at least two distinct (by free-identifier=?) "lambda"s that could end up here
-         ((define-values (method-name:id) ((~datum lambda) (method-arg:id ...) method-body:expr ...)) ...)
+         ((define-values (method-name:id) method-expr:expr) ...)
          ; only 1 field definition allowed
          ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
          (expr ...))
@@ -278,23 +277,24 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
         (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
         #'(let ()
             (letrec ([method-table
-                      (vector (lambda (this-arg method-arg ...)
-                                ; to support class-level expressions that may call methods and fields,
-                                ; this will have to be done around class-level expressions too
-                                (let ([fields (object-fields this-arg)])
-                                  (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                               ...)
-                                    (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                      method-body
-                                      ...))))
-                              ...)]
+                      (vector
+                       (lambda (this-arg . args)
+                         (parameterize ([this-parameter this-arg])
+                           (let ([fields (object-fields this-arg)])
+                             (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                          ...)
+                               (let ([method method-expr])
+                                 (unless (procedure? method)
+                                   (error 'class "definition of method ~a is not a procedure" #''method-name))
+                                 (apply method args))))))
+                       ...)]
                      [constructor
                       (lambda (field-name ...)
                         (let ([this-val (object (vector field-name ...) cls)])
                           (let ([fields (object-fields this-val)])
                             (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
                                          ...)
-                              (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+                              (parameterize ([this-parameter this-val])
                                 ; I'm just putting this here to ensure that the body is non-empty
                                 ; That's ok, right?
                                 (void)
