@@ -1,9 +1,15 @@
 (module+ test
-  (require (rename-in rackunit [test-case their-test-case]) syntax/macro-testing)
+
+  (require racket/block
+           (for-syntax rackunit)
+           (rename-in rackunit [test-case their-test-case])
+           syntax/macro-testing)
   ;;; left off here about to wrap test-case in convert-compile-time-error
   (define-syntax-rule
     (test-case desc body ...)
     (their-test-case desc (convert-compile-time-error (let () body ...)))))
+
+(begin-for-syntax (define v (box 0)))
 
 (module+ test
   (test-case "simple class"
@@ -251,10 +257,12 @@
       (new (class
              (define-syntax-rule (m) this)
              (set! v (m)))))
-    (check-equal? foo v)))
-(void (class
-        (define-syntax m
-          (let ()
-            (displayln "Side effect in a syntax definition!")
-            (lambda (stx) #'42)))
-        (m)))
+    (check-equal? foo v))
+  (test-case "transformers only get evaluated once"
+    (class
+      (define-syntax m
+        (let ()
+          (set-box! v (add1 (unbox v)))
+          (lambda (stx) #'42)))
+      (m))
+    (check-equal? (phase1-eval (unbox v)) 1)))
