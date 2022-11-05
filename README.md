@@ -45,9 +45,24 @@ Problems with this implementation:
 
 - Since method bodies get local-expanded and then re-expanded after emission, nested classes can lead to quadratic re-expansions
 
+The problem is that the expander doesn't trust our local-expanded code and re-expands it.
+Ideally, we could use `syntax-local-expand-expression`, but that function doesn't accept a definition
+context. If a variable binidng was in the context, the expander could not trust that the variable would
+end up being defined in the emitted code. However, if the definition context only contained transformer bindings,
+their references would all expand away, and thus, the expander could safely substitute the result.
+If the expander were to have this change made, we could replace the `local-expand` with a `syntax-local-expand-expression` when we resume suspensions. This would avoid the quadratic re-expansion problem.
+
 ## bindingspec eager style
 
 `bs-manual-eager` is like `bs-manual`, but immediately expands expression positions instead of creating suspensions.
 Additionally, rather than purely using syntax parameters for `this`, dynamic parameters are used under the hood to allow eager
 expansion of syntax parameter references. 
 I did this just to see if it was possible. No advantages over non-eager that I can think of.
+
+This method also has potentially quadratic re-expansions, which can be alleviated by the `syntax-local-expand-expression` change in a similar way.
+
+## using bindingspec
+
+`bs-auto` uses the bindingspec library. It doesn't support local syntax definitions.
+I ended up having to emit syntax definitions for methods to be used as procedures. I don't know
+why this can't just be done with a reference compiler, but it was giving me unbound errors.
