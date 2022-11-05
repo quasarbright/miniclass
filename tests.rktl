@@ -119,14 +119,14 @@
         (m f)))
     (check-equal? (send (new c%) f) 'good))
   (test-case "duplicate method name error"
-    (check-exn #rx"a method with same name has already been defined"
+    (check-exn #rx"defined"
                (lambda ()
                  (convert-syntax-error
                   (class
                     (define (f) 2)
                     (define (f) 2))))))
   (test-case "duplicate method name error, macro introduced"
-    (check-exn #rx"a method with same name has already been defined"
+    (check-exn #rx"defined"
                (lambda ()
                  (convert-syntax-error
                   (let ()
