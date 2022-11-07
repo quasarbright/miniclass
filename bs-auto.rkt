@@ -85,10 +85,10 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (binding-class method-var #:description "method name")
   (binding-class method-arg-var #:description "method argument name")
   (binding-class field-var #:description "field name")
-  (extension-class method-macro #:description "method macro")
-  (extension-class field-macro #:description "field macro")
+  (extension-class class-macro #:description "class macro")
 
   (two-pass-nonterminal class-form
+                        #:allow-extension class-macro
                         (field name:field-var ...)
                         #:binding (export name)
                         ((~literal define) (m:method-var arg:method-arg-var ...) body:expr ...)
@@ -102,7 +102,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (class e:class-form ...)
   #:binding {(recursive e)}
   (define-values (defns fields exprs) (group-class-decls #'(e ...)))
-  (begin0 (compile-class-body defns fields exprs)))
+  (compile-class-body defns fields exprs))
 
 ; initially copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
 #;(define-syntax class
