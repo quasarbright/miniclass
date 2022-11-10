@@ -12,11 +12,12 @@
          racket/stxparam
          syntax/transformer
          (for-syntax ee-lib
+                     racket/list
                      syntax/parse
                      syntax/transformer))
 
 (struct class-info [name->method-index method-table constructor])
-; A ClassInfo is a (class-info (identifier -> natural) (any ... -> Object)) where
+; A ClassInfo is a (class-info (symbol -> natural) (any ... -> Object)) where
 ; name->method-index maps a method name to its vector index in the method-table
 ; method-table is a vector of methods
 ; Represents a class itself
@@ -159,18 +160,12 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
         ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
         (expr ...))
        (check-duplicate-method-names (attribute method-name))
-       (define num-fields (length (attribute field-name)))
        (for ([field-name (attribute field-name)]
              [field-index (in-naturals)])
          (symbol-table-set! field-index-table field-name field-index))
-       #'(with-reference-compilers ([method-var (make-variable-like-transformer (lambda (name-stx) #`(lambda args (send this #,name-stx . args))))]
+       #'(with-reference-compilers ([method-var method-reference-compiler]
                                     [method-arg-var mutable-reference-compiler]
-                                    [field-var (make-variable-like-transformer (lambda (id) (let ([idx (symbol-table-ref field-index-table id)])
-                                                                                              #`(vector-ref (object-fields this) #,idx)))
-                                                                               (syntax-parser
-                                                                                 [(_ id:id rhs)
-                                                                                  (let ([idx (symbol-table-ref field-index-table #'id)])
-                                                                                    #`(vector-set! (object-fields this) #,idx rhs))]))])
+                                    [field-var field-reference-compiler])
            (letrec ([method-table
                      (vector (lambda (this-arg method-arg ...)
                                ; to support class-level expressions that may call methods and fields,
@@ -190,29 +185,41 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                            ...)
                          this-val))]
                     [method-name->index
-                     (make-name->index (list #'method-name ...))]
+                     (make-name->index (list 'method-name ...))]
                     [cls
                      (class-info method-name->index method-table constructor)])
              cls))]))
+
+  (define method-reference-compiler
+    (make-variable-like-transformer (syntax-parser
+                                      [name:id
+                                       #'(lambda args (send this name . args))])))
+
+  (define field-reference-compiler
+    (make-variable-like-transformer (syntax-parser
+                                      [name:id
+                                       (let ([idx (symbol-table-ref field-index-table #'name)])
+                                         #`(vector-ref (object-fields this) #,idx))])
+                                    (syntax-parser
+                                      [(_ name:id rhs)
+                                       (let ([idx (symbol-table-ref field-index-table #'name)])
+                                         #`(vector-set! (object-fields this) #,idx rhs))])))
+
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)
-    (let loop ([ids names] [seen-symbols '()])
-      (cond
-        [(null? ids) (void)]
-        [(member (syntax->datum (car ids)) seen-symbols)
-         (raise-syntax-error #f "a method with same name has already been defined" (car ids))]
-        [else
-         (loop (cdr ids) (cons (syntax->datum (car ids)) seen-symbols))]))))
+    (let ([duplicate (check-duplicates names #:key syntax->datum)])
+      (when duplicate
+        (raise-syntax-error #f "a method with same name has already been defined" duplicate)))))
 
-#;((listof identifier?) -> (identifier? -> natural?))
+#;((listof symbol?) -> (symbol? -> natural?))
 ; Create a function that maps method names to their method table indices
 (define (make-name->index names)
-  (let ([table (make-hasheq (map (lambda (id index) (cons (syntax->datum id) index))
-                                 names
-                                 (build-list (length names) identity)))])
+  (let ([table (for/hasheq ([name names]
+                            [idx (in-naturals)])
+                 (values name idx))])
     (lambda (name)
-      (hash-ref table (syntax->datum name) (lambda () (error 'send "no such method ~a" name))))))
+      (hash-ref table name (lambda () (error 'send "no such method ~a" name))))))
 
 (define (new cls . fields)
   (apply (class-info-constructor cls) fields))
@@ -220,13 +227,14 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
 (define-syntax send
   (syntax-parser
     [(_ obj:expr method-name:id arg:expr ...)
-     #'(send-rt obj #'method-name (list arg ...))]
+     #'(send-rt obj 'method-name (list arg ...))]
     [(_ obj:expr method-name:id . args)
-     #'(send-rt obj #'method-name args)]))
+     #'(send-rt obj 'method-name args)]))
 
-(define (send-rt obj method-name-stx args)
+#;(object? symbol? (listof any/c) -> any/c)
+(define (send-rt obj method-name args)
   (let* ([cls (object-class obj)]
-         [index ((class-info-name->method-index cls) method-name-stx)]
+         [index ((class-info-name->method-index cls) method-name)]
          [method-table (class-info-method-table cls)]
          [method (vector-ref method-table index)])
     (apply method obj args)))
