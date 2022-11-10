@@ -8,7 +8,12 @@
 (module+ test (require rackunit))
 (provide (all-defined-out))
 
-(require bindingspec racket/stxparam syntax/transformer (for-syntax syntax/context syntax/intdef syntax/parse syntax/transformer))
+(require bindingspec
+         racket/stxparam
+         syntax/transformer
+         (for-syntax ee-lib
+                     syntax/parse
+                     syntax/transformer))
 
 (struct class-info [name->method-index method-table constructor])
 ; A ClassInfo is a (class-info (identifier -> natural) (any ... -> Object)) where
@@ -104,16 +109,8 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (define-values (defns fields exprs) (group-class-decls #'(e ...)))
   (compile-class-body defns fields exprs))
 
-; initially copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
-#;(define-syntax class
-  (make-expression-transformer
-   (lambda (stx)
-     (let ([def-ctx (syntax-local-make-definition-context)])
-       ; If this was going to get more complicated, I'd do more pre-processing into appropriate structured data
-       (let-values ([(defns fields exprs) (group-class-decls (local-expand-class-body stx def-ctx))])
-         (compile-class-body defns fields exprs def-ctx))))))
-
 (begin-for-syntax
+  (define-symbol-table field-index-table)
 
   #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?)))
   ; accepts a list of partially expanded class-level definitions and returns them grouped into
@@ -163,42 +160,40 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
         (expr ...))
        (check-duplicate-method-names (attribute method-name))
        (define num-fields (length (attribute field-name)))
-       (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
-       #'(with-reference-compilers ([method-var immutable-reference-compiler]
+       (for ([field-name (attribute field-name)]
+             [field-index (in-naturals)])
+         (symbol-table-set! field-index-table field-name field-index))
+       #'(with-reference-compilers ([method-var (make-variable-like-transformer (lambda (name-stx) #`(lambda args (send this #,name-stx . args))))]
                                     [method-arg-var mutable-reference-compiler]
-                                    [field-var mutable-reference-compiler])
-           (let ()
-             (let-syntax ([method-name (make-variable-like-transformer #'(lambda args (send this method-name . args)))]
-                          ...)
-               (letrec ([method-table
-                         (vector (lambda (this-arg method-arg ...)
-                                   ; to support class-level expressions that may call methods and fields,
-                                   ; this will have to be done around class-level expressions too
-                                   (let ([fields (object-fields this-arg)])
-                                     (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                                  ...)
-                                       (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                         method-body
-                                         ...))))
-                                 ...)]
-                        [constructor
-                         (lambda (field-name ...)
-                           (let ([this-val (object (vector field-name ...) cls)])
-                             (let ([fields (object-fields this-val)])
-                               (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                            ...)
-                                 (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-                                   ; I'm just putting this here to ensure that the body is non-empty
-                                   ; That's ok, right?
-                                   (void)
-                                   expr
-                                   ...)))
-                             this-val))]
-                        [method-name->index
-                         (make-name->index (list #'method-name ...))]
-                        [cls
-                         (class-info method-name->index method-table constructor)])
-                 cls))))]))
+                                    [field-var (make-variable-like-transformer (lambda (id) (let ([idx (symbol-table-ref field-index-table id)])
+                                                                                              #`(vector-ref (object-fields this) #,idx)))
+                                                                               (syntax-parser
+                                                                                 [(_ id:id rhs)
+                                                                                  (let ([idx (symbol-table-ref field-index-table #'id)])
+                                                                                    #`(vector-set! (object-fields this) #,idx rhs))]))])
+           (letrec ([method-table
+                     (vector (lambda (this-arg method-arg ...)
+                               ; to support class-level expressions that may call methods and fields,
+                               ; this will have to be done around class-level expressions too
+                               (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                 method-body
+                                 ...))
+                             ...)]
+                    [constructor
+                     (lambda (field-name ...)
+                       (let ([this-val (object (vector field-name ...) cls)])
+                         (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+                           ; I'm just putting this here to ensure that the body is non-empty
+                           ; That's ok, right?
+                           (void)
+                           expr
+                           ...)
+                         this-val))]
+                    [method-name->index
+                     (make-name->index (list #'method-name ...))]
+                    [cls
+                     (class-info method-name->index method-table constructor)])
+             cls))]))
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)
@@ -218,13 +213,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                  (build-list (length names) identity)))])
     (lambda (name)
       (hash-ref table (syntax->datum name) (lambda () (error 'send "no such method ~a" name))))))
-
-(begin-for-syntax
-  ; Creates a set!-transformer that accesses and mutates an elment of a vector
-  (define (make-vector-ref-transformer vector-stx index-stx)
-    (make-variable-like-transformer
-     #`(vector-ref #,vector-stx #,index-stx)
-     #`(lambda (v) (vector-set! #,vector-stx #,index-stx v)))))
 
 (define (new cls . fields)
   (apply (class-info-constructor cls) fields))
