@@ -143,12 +143,11 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                  (loop (append (syntax->list #'rest) todo) r)]
                 [(define-syntaxes (id:id ...) rhs)
                  ; bind ids to transformers in the def-ctx
-                 (with-syntax ([rhs (local-transformer-expand #'rhs 'expression null)])
-                   (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
-                                                                       #'rhs
-                                                                       def-ctx)])
-                     ; don't care about syntax defns after pass1
-                     (loop todo r)))]
+                 (syntax-local-bind-syntaxes (syntax->list #'(id ...))
+                                             #'rhs
+                                             def-ctx)
+                 ; don't care about syntax defns after pass1
+                 (loop todo r)]
                 [(define-values (id:id ...) rhs)
                  (unless (= 1 (length (attribute id)))
                    (raise-syntax-error #f "each method must be defined separately" this-syntax))
@@ -159,13 +158,13 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                               #`(their-lambda args #,(suspend-expr #'(begin body ...) def-ctx))]))
                  ; bind method ids to transformers in the def-ctx
                  (define/syntax-parse (method-name) #'(id ...))
-                 (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
+                 (with-syntax ([(method-name) (syntax-local-bind-syntaxes (list #'method-name)
                                                                      #'(make-variable-like-transformer
                                                                         #'(lambda args (send this method-name . args)))
                                                                      def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr
-                                     (list #'define-values #'(id ...) #'rhs^)
+                                     (list #'define-values #'(method-name) #'rhs^)
                                      expr
                                      expr)
                                     r)))]
@@ -283,7 +282,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (define (compile-class-body defns fields exprs def-ctx)
     (add-decl-props
      def-ctx
-     (append defns)
+     (append fields defns)
      ; TODO better error messages
      (syntax-parse (list defns fields exprs)
        #:literals (define-values field)
@@ -296,36 +295,35 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
         (check-duplicate-method-names (attribute method-name))
         (define num-fields (length (attribute field-name)))
         (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
-        #'(let ()
-            (letrec ([method-table
-                      (vector (lambda (this-arg method-arg ...)
-                                ; to support class-level expressions that may call methods and fields,
-                                ; this will have to be done around class-level expressions too
-                                (let ([fields (object-fields this-arg)])
-                                  (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                               ...)
-                                    (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                      method-body
-                                      ...))))
-                              ...)]
-                     [constructor
-                      (lambda (field-name ...)
-                        (let ([this-val (object (vector field-name ...) cls)])
-                          (let ([fields (object-fields this-val)])
-                            (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                         ...)
-                              (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-                                ; I'm just putting this here to ensure that the body is non-empty
-                                ; That's ok, right?
-                                (void)
-                                expr
-                                ...)))
-                          this-val))]
-                     [method-name->index
-                      (make-name->index (list #'method-name ...))]
-                     [cls
-                      (class-info method-name->index method-table constructor)])
-              cls))])))
+        #'(letrec ([method-table
+                  (vector (lambda (this-arg method-arg ...)
+                            ; to support class-level expressions that may call methods and fields,
+                            ; this will have to be done around class-level expressions too
+                            (let ([fields (object-fields this-arg)])
+                              (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                           ...)
+                                (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                  method-body
+                                  ...))))
+                          ...)]
+                 [constructor
+                  (lambda (field-name ...)
+                    (let ([this-val (object (vector field-name ...) cls)])
+                      (let ([fields (object-fields this-val)])
+                        (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
+                                     ...)
+                          (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+                            ; I'm just putting this here to ensure that the body is non-empty
+                            ; That's ok, right?
+                            (void)
+                            expr
+                            ...)))
+                      this-val))]
+                 [method-name->index
+                  (make-name->index (list #'method-name ...))]
+                 [cls
+                  (class-info method-name->index method-table constructor)])
+          cls)])))
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)

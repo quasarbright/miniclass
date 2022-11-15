@@ -1,7 +1,7 @@
 (module+ test
 
   (require racket/block
-           (for-syntax rackunit)
+           (for-syntax rackunit syntax/parse)
            (rename-in rackunit [test-case their-test-case])
            syntax/macro-testing)
   ;;; left off here about to wrap test-case in convert-compile-time-error
@@ -265,4 +265,20 @@
           (set-box! v (add1 (unbox v)))
           (lambda (stx) #'42)))
       (m))
-    (check-equal? (phase1-eval (unbox v)) 1)))
+    (check-equal? (phase1-eval (unbox v)) 1))
+  #;; TODO figure out why this fails
+  (test-case "disappeared props"
+    (define-syntax my-fields
+      (syntax-parser
+        [(_ name:id ...)
+         #'(field name ...)]))
+    (define-syntax get-disappeared-uses
+      (syntax-parser
+        [(_ e:expr)
+         (define e^ (local-expand #'e 'expression '()))
+         #`'#,(syntax-property e^ 'disappeared-use)]))
+    (check-pred (λ (uses)
+                  (match uses
+                    [(list use)
+                     (free-identifier=? use #'my-fields)]))
+                (get-disappeared-uses (class (my-fields a b c))))))

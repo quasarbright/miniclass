@@ -89,7 +89,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
 
 (define-hosted-syntaxes
   (binding-class method-var #:description "method name")
-  (binding-class method-arg-var #:description "method argument name")
   (binding-class field-var #:description "field name")
   (extension-class class-macro #:description "class macro")
 
@@ -97,8 +96,8 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                         #:allow-extension class-macro
                         (field name:field-var ...)
                         #:binding (export name)
-                        ((~literal define) (m:method-var arg:method-arg-var ...) body:expr ...)
-                        #:binding [(export m) {(bind arg) (host body)}]
+                        ((~literal define) (m:method-var arg:id ...) body:expr ...)
+                        #:binding [(export m) (host body)]
                         (~literal this)
                         (~literal this%)
                         e:expr
@@ -152,7 +151,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (define (compile-class-body defns fields exprs)
     ; TODO better error messages
     (add-decl-props
-     defns
+     (append fields defns)
      (syntax-parse (list defns fields exprs)
        #:literals (define field)
        [(; I know ~datum for lambda is bad, but I don't know how to do this correctly
@@ -166,7 +165,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
               [field-index (in-naturals)])
           (symbol-table-set! field-index-table field-name field-index))
         #'(with-reference-compilers ([method-var method-reference-compiler]
-                                     [method-arg-var mutable-reference-compiler]
                                      [field-var field-reference-compiler])
             (letrec ([method-table
                       (vector (lambda (this-arg method-arg ...)

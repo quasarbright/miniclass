@@ -262,7 +262,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (define (compile-class-body defns fields exprs def-ctx)
     (add-decl-props
      def-ctx
-     (append defns)
+     (append fields defns)
      ; TODO better error messages
      (syntax-parse (list defns fields exprs)
        #:literals (define-values field)

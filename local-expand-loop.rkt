@@ -240,7 +240,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (define (compile-class-body defns stx-defns fields exprs def-ctx)
     (add-decl-props
      def-ctx
-     (append stx-defns defns)
+     (append fields stx-defns defns)
      ; TODO better error messages
      (syntax-parse (list stx-defns defns fields exprs)
        #:literals (define-values field)
