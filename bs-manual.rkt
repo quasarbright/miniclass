@@ -168,12 +168,23 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                      expr
                                      expr)
                                     r)))]
-                [(field id:id ...)
-                 (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
+                [(field field-name:id ...)
+                 ; NOTE this only works for a single field declaration
+                 (define/syntax-parse (field-index ...) (build-list (length (attribute field-name)) (λ (n) #`#,n)))
+                 (with-syntax ([(field-name ...) (syntax-local-bind-syntaxes (syntax->list #'(field-name ...))
+                                                                             #'(values (make-variable-like-transformer
+                                                                                        #'(vector-ref (object-fields this)
+                                                                                                      field-index)
+                                                                                        #'(lambda (v)
+                                                                                            (vector-set! (object-fields this)
+                                                                                                         field-index
+                                                                                                         v)))
+                                                                                       ...)
+                                                                             def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr
                                      ; block does this slightly differently, be careful
-                                     #'(field id ...)
+                                     #'(field field-name ...)
                                      expr
                                      expr)
                                     r)))]
@@ -293,31 +304,26 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
          ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
          (expr ...))
         (check-duplicate-method-names (attribute method-name))
-        (define num-fields (length (attribute field-name)))
-        (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
+        ; If we didn't rename, we'd say `field-name` in the constructor's arguments, which would shadow the transformer binding
+        ; This would make set! on a field at class-level not mutate the actual field, but rather the constructor argument.
+        (define/syntax-parse (field-name-renamed ...) (generate-temporaries #'(field-name ...)))
         #'(letrec ([method-table
                   (vector (lambda (this-arg method-arg ...)
                             ; to support class-level expressions that may call methods and fields,
                             ; this will have to be done around class-level expressions too
-                            (let ([fields (object-fields this-arg)])
-                              (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                           ...)
-                                (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                  method-body
-                                  ...))))
+                            (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                              method-body
+                              ...))
                           ...)]
                  [constructor
-                  (lambda (field-name ...)
-                    (let ([this-val (object (vector field-name ...) cls)])
-                      (let ([fields (object-fields this-val)])
-                        (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                     ...)
-                          (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-                            ; I'm just putting this here to ensure that the body is non-empty
-                            ; That's ok, right?
-                            (void)
-                            expr
-                            ...)))
+                  (lambda (field-name-renamed ...)
+                    (let ([this-val (object (vector field-name-renamed ...) cls)])
+                      (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+                        ; I'm just putting this here to ensure that the body is non-empty
+                        ; That's ok, right?
+                        (void)
+                        expr
+                        ...)
                       this-val))]
                  [method-name->index
                   (make-name->index (list #'method-name ...))]

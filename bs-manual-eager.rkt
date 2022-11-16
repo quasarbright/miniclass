@@ -176,12 +176,23 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                      expr
                                      expr)
                                     r)))]
-                [(field id:id ...)
-                 (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
+                [(field field-name:id ...)
+                 ; NOTE this only works for a single field declaration
+                 (define/syntax-parse (field-index ...) (build-list (length (attribute field-name)) (λ (n) #`#,n)))
+                 (with-syntax ([(field-name ...) (syntax-local-bind-syntaxes (syntax->list #'(field-name ...))
+                                                                             #'(values (make-variable-like-transformer
+                                                                                        #'(vector-ref (object-fields this)
+                                                                                                      field-index)
+                                                                                        #'(lambda (v)
+                                                                                            (vector-set! (object-fields this)
+                                                                                                         field-index
+                                                                                                         v)))
+                                                                                       ...)
+                                                                             def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr
                                      ; block does this slightly differently, be careful
-                                     #'(field id ...)
+                                     #'(field field-name ...)
                                      expr
                                      expr)
                                     r)))]
@@ -280,26 +291,20 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                       (vector
                        (lambda (this-arg . args)
                          (parameterize ([this-parameter this-arg])
-                           (let ([fields (object-fields this-arg)])
-                             (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                          ...)
-                               (let ([method method-expr])
-                                 (unless (procedure? method)
-                                   (error 'class "definition of method ~a is not a procedure" #''method-name))
-                                 (apply method args))))))
+                           (let ([method method-expr])
+                             (unless (procedure? method)
+                               (error 'class "definition of method ~a is not a procedure" #''method-name))
+                             (apply method args))))
                        ...)]
                      [constructor
                       (lambda (field-name ...)
                         (let ([this-val (object (vector field-name ...) cls)])
-                          (let ([fields (object-fields this-val)])
-                            (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                         ...)
-                              (parameterize ([this-parameter this-val])
-                                ; I'm just putting this here to ensure that the body is non-empty
-                                ; That's ok, right?
-                                (void)
-                                expr
-                                ...)))
+                          (parameterize ([this-parameter this-val])
+                            ; I'm just putting this here to ensure that the body is non-empty
+                            ; That's ok, right?
+                            (void)
+                            expr
+                            ...)
                           this-val))]
                      [method-name->index
                       (make-name->index (list #'method-name ...))]
