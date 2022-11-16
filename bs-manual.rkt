@@ -8,7 +8,13 @@
 (module+ test (require rackunit))
 (provide (all-defined-out))
 
-(require racket/stxparam syntax/transformer (for-syntax syntax/context syntax/intdef syntax/parse syntax/transformer))
+(require racket/stxparam
+         syntax/transformer
+         (for-syntax syntax/context
+                     syntax/intdef
+                     syntax/parse
+                     syntax/transformer
+                     racket/list))
 
 (struct class-info [name->method-index method-table constructor])
 ; A ClassInfo is a (class-info (identifier -> natural) (any ... -> Object)) where
@@ -333,13 +339,9 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)
-    (let loop ([ids names] [seen-symbols '()])
-      (cond
-        [(null? ids) (void)]
-        [(member (syntax->datum (car ids)) seen-symbols)
-         (raise-syntax-error #f "a method with same name has already been defined" (car ids))]
-        [else
-         (loop (cdr ids) (cons (syntax->datum (car ids)) seen-symbols))]))))
+    (let ([duplicate (check-duplicates names #:key syntax->datum)])
+      (when duplicate
+        (raise-syntax-error #f "a method with same name has already been defined" duplicate)))))
 
 (define-syntax #%host-expression
   (syntax-parser
