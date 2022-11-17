@@ -12,6 +12,7 @@
          racket/stxparam
          syntax/transformer
          (for-syntax ee-lib
+                     ee-lib/syntax-category
                      racket/list
                      syntax/parse
                      syntax/transformer))
@@ -33,6 +34,12 @@
 ; Represents a method on a class
 
 (begin-for-syntax
+  (struct literal-transformer-rep [param-stx]
+    #:property prop:procedure (λ (s stx)
+                                ((set!-transformer-procedure (make-variable-like-transformer (literal-transformer-rep-param-stx s)))
+                                 stx))
+    #:property prop:not-racket-syntax #t)
+
   #;(symbol? -> transformer?)
   ; creates a transformer that errors out when used outside of a class
   (define (make-literal-transformer id-sym)
@@ -42,11 +49,12 @@
 ; define syntax parameters that error out when used outside of a class
 (define-syntax define-class-syntax-parameters
   (syntax-parser
-    [(_ name:id ...)
-     #'(begin (define-syntax-parameter name (make-literal-transformer 'name))
+    [(_ (name:id name-internal:id) ...)
+     #'(begin (begin (define-syntax-parameter name-internal (make-literal-transformer 'name))
+                     (define-syntax name (literal-transformer-rep #'name-internal)))
               ...)]))
 
-(define-class-syntax-parameters this this%)
+(define-class-syntax-parameters (this this-internal) (this% this%-internal))
 
 #|
 next steps:
@@ -87,16 +95,21 @@ Macro definitions won't have to be emitted, so they'll only be evaluated once wh
 And we won't have to local-expand suspensions, they'll just expand with the transformers in context.
 |#
 
+(begin-for-syntax
+  (define-syntax-class lambda-id
+    (pattern (~or (~literal lambda) (~literal #%plain-lambda)))))
+
 (define-hosted-syntaxes
   (binding-class method-var #:description "method name")
   (binding-class field-var #:description "field name")
-  (extension-class class-macro #:description "class macro")
 
   (two-pass-nonterminal class-form
-                        #:allow-extension class-macro
+                        #:allow-extension racket-macro
                         (field name:field-var ...)
                         #:binding (export name)
-                        ((~literal define) (m:method-var arg:id ...) body:expr ...)
+                        ; I can't do an ~alt here to specify which kind of lambda I expect, so I accept anything
+                        ; It looks like macro-introduced definitions expand to lambda, but surface definitions expand to new-lambda
+                        ((~literal define-values) (m:method-var) (lambda:lambda-id (arg:id ...) body:expr ...))
                         #:binding [(export m) (host body)]
                         (~literal this)
                         (~literal this%)
@@ -125,8 +138,8 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
       (syntax-parse exprs
         [(expr . rest-exprs)
          (syntax-parse #'expr
-           #:literals (define field)
-           [(define . _)
+           #:literals (define-values field)
+           [(define-values . _)
             (loop #'rest-exprs
                   (cons #'expr prev-defns)
                   prev-fields
@@ -153,10 +166,10 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
     (add-decl-props
      (append fields defns)
      (syntax-parse (list defns fields exprs)
-       #:literals (define field)
+       #:literals (define-values field)
        [(; I know ~datum for lambda is bad, but I don't know how to do this correctly
          ; There are at least two distinct (by free-identifier=?) "lambda"s that could end up here
-         ((define (method-name:id method-arg:id ...)  method-body:expr ...) ...)
+         ((define-values (method-name:id) (_ (method-arg:id ...) method-body:expr ...)) ...)
          ; only 1 field definition allowed
          ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
          (expr ...))
@@ -170,14 +183,14 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                       (vector (lambda (this-arg method-arg ...)
                                 ; to support class-level expressions that may call methods and fields,
                                 ; this will have to be done around class-level expressions too
-                                (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                (syntax-parameterize ([this-internal (make-variable-like-transformer #'this-arg)])
                                   method-body
                                   ...))
                               ...)]
                      [constructor
                       (lambda (field-name ...)
                         (let ([this-val (object (vector field-name ...) cls)])
-                          (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+                          (syntax-parameterize ([this-internal (make-variable-like-transformer #'this-val)])
                             ; I'm just putting this here to ensure that the body is non-empty
                             ; That's ok, right?
                             (void)
