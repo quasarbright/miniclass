@@ -34,12 +34,6 @@
 ; Represents a method on a class
 
 (begin-for-syntax
-  (struct literal-transformer-rep [param-stx]
-    #:property prop:procedure (λ (s stx)
-                                ((set!-transformer-procedure (make-variable-like-transformer (literal-transformer-rep-param-stx s)))
-                                 stx))
-    #:property prop:not-racket-syntax #t)
-
   #;(symbol? -> transformer?)
   ; creates a transformer that errors out when used outside of a class
   (define (make-literal-transformer id-sym)
@@ -49,12 +43,11 @@
 ; define syntax parameters that error out when used outside of a class
 (define-syntax define-class-syntax-parameters
   (syntax-parser
-    [(_ (name:id name-internal:id) ...)
-     #'(begin (begin (define-syntax-parameter name-internal (make-literal-transformer 'name))
-                     (define-syntax name (literal-transformer-rep #'name-internal)))
+    [(_ name:id ...)
+     #'(begin (define-syntax-parameter name (make-expression-transformer (make-literal-transformer 'name)))
               ...)]))
 
-(define-class-syntax-parameters (this this-internal) (this% this%-internal))
+(define-class-syntax-parameters this this%)
 
 #|
 next steps:
@@ -111,8 +104,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                         ; It looks like macro-introduced definitions expand to lambda, but surface definitions expand to new-lambda
                         ((~literal define-values) (m:method-var) (lambda:lambda-id (arg:id ...) body:expr ...))
                         #:binding [(export m) (host body)]
-                        (~literal this)
-                        (~literal this%)
                         e:expr
                         #:binding (host e)))
 
@@ -183,14 +174,14 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                       (vector (lambda (this-arg method-arg ...)
                                 ; to support class-level expressions that may call methods and fields,
                                 ; this will have to be done around class-level expressions too
-                                (syntax-parameterize ([this-internal (make-variable-like-transformer #'this-arg)])
+                                (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
                                   method-body
                                   ...))
                               ...)]
                      [constructor
                       (lambda (field-name ...)
                         (let ([this-val (object (vector field-name ...) cls)])
-                          (syntax-parameterize ([this-internal (make-variable-like-transformer #'this-val)])
+                          (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
                             ; I'm just putting this here to ensure that the body is non-empty
                             ; That's ok, right?
                             (void)
