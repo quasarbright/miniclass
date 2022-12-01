@@ -104,6 +104,10 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                         ; It looks like macro-introduced definitions expand to lambda, but surface definitions expand to new-lambda
                         ((~literal define-values) (m:method-var) (lambda:lambda-id (arg:id ...) body:expr ...))
                         #:binding [(export m) (host body)]
+
+                        ((~literal define-syntaxes) (x:racket-macro) e:expr)
+                        #:binding (export-syntax x e)
+
                         e:expr
                         #:binding (host e)))
 
@@ -114,7 +118,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (compile-class-body defns fields exprs))
 
 (begin-for-syntax
-  (define-symbol-table field-index-table)
+  (define-persistent-symbol-table field-index-table)
 
   #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?)))
   ; accepts a list of partially expanded class-level definitions and returns them grouped into
@@ -129,10 +133,16 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
       (syntax-parse exprs
         [(expr . rest-exprs)
          (syntax-parse #'expr
-           #:literals (define-values field)
+           #:literals (define-values define-syntaxes field)
            [(define-values . _)
             (loop #'rest-exprs
                   (cons #'expr prev-defns)
+                  prev-fields
+                  prev-exprs)]
+           [(define-syntaxes . _)
+            ; ignore bc they don't end up in the generated code.
+            (loop #'rest-exprs
+                  prev-defns
                   prev-fields
                   prev-exprs)]
            [(field . _)

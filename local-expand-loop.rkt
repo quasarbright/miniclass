@@ -147,7 +147,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (define (local-expand-class-body stx def-ctx)
     (let*
         ([ctx (generate-expand-context #t)]
-         [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda #'this)]
+         [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda #'this #'this% #'#%app)]
          [init-exprs (let ([v (syntax->list stx)])
                        (unless v (raise-syntax-error #f "bad syntax" stx))
                        (map (λ (expr) (internal-definition-context-add-scopes def-ctx expr))

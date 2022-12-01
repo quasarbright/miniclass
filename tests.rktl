@@ -224,13 +224,11 @@
     (check-equal? v 'good))
   (test-case "local macro use before definition"
     ; this error is weird, but it's the same behavior as module-level racket
-    (check-exn
-     #rx"use does not match pattern"
-     (lambda ()
-       (convert-compile-time-error
-        (class
-          (m)
-          (define-syntax-rule (m) (set! x 1)))))))
+    (define v 'bad)
+    (new (class
+           (m)
+           (define-syntax-rule (m) (set! v 'good))))
+    (check-equal? v 'good))
   ; I'm surprised this works, because if you locl expand a usage of a syntax paramter,
   ; it gets expanded away.
   ; The reason it works is because send expands to a #%app, which doesn't expand
