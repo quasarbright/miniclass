@@ -1,6 +1,7 @@
 (module+ test
 
   (require racket/block
+           drracket/check-syntax
            (for-syntax rackunit syntax/parse)
            (rename-in rackunit [test-case their-test-case])
            syntax/macro-testing)
@@ -272,19 +273,22 @@
                                              (syntax-rules () [(one) 1])))
        (set! v (double (one)))))
     (check-equal? v '(1 1)))
-  #;; TODO figure out why this fails
+  ;#;; TODO figure out why this fails
+  (define-namespace-anchor a)
   (test-case "disappeared props"
-    (define-syntax my-fields
-      (syntax-parser
-        [(_ name:id ...)
-         #'(field name ...)]))
-    (define-syntax get-disappeared-uses
-      (syntax-parser
-        [(_ e:expr)
-         (define e^ (local-expand #'e 'expression '()))
-         #`'#,(syntax-property e^ 'disappeared-use)]))
-    (check-pred (λ (uses)
-                  (match uses
-                    [(list use)
-                     (free-identifier=? use #'my-fields)]))
-                (get-disappeared-uses (class (my-fields a b c))))))
+    (define (num-arrows-of check-syntax-result)
+      (length (for/list ([vec check-syntax-result] #:when (equal? (vector-ref vec 0)
+                                                                  'syncheck:add-arrow/name-dup/pxpy))
+                vec)))
+    (define ns (namespace-anchor->namespace a))
+    (check-equal? (num-arrows-of
+                   (show-content (quote-syntax (class
+                                                 (define-syntax x #'a)
+                                                 (define-syntax my-fields
+                                                   (syntax-parser
+                                                     [(_ name:id)
+                                                      (define/syntax-parse field-name (syntax-local-value #'name))
+                                                      (syntax-property #'(field field-name) 'disappeared-use (list (syntax-local-introduce #'name)))]))
+                                                 (my-fields x)))
+                                 #:namespace ns))
+                  2)))
