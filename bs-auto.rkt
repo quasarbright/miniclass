@@ -8,11 +8,10 @@
 (module+ test (require rackunit))
 (provide (all-defined-out))
 
-(require bindingspec
+(require syntax-spec
          racket/stxparam
          syntax/transformer
-         (for-syntax ee-lib
-                     ee-lib/syntax-category
+         (for-syntax ee-lib/syntax-category
                      racket/list
                      syntax/parse
                      syntax/transformer))
@@ -92,30 +91,32 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   (define-syntax-class lambda-id
     (pattern (~or (~literal lambda) (~literal #%plain-lambda)))))
 
-(define-hosted-syntaxes
+(syntax-spec
   (binding-class method-var #:description "method name")
   (binding-class field-var #:description "field name")
 
-  (two-pass-nonterminal class-form
+  (nonterminal/two-pass class-form
                         #:allow-extension racket-macro
                         (field name:field-var ...)
                         #:binding (export name)
                         ; I can't do an ~alt here to specify which kind of lambda I expect, so I accept anything
                         ; It looks like macro-introduced definitions expand to lambda, but surface definitions expand to new-lambda
-                        ((~literal define-values) (m:method-var) (lambda:lambda-id (arg:id ...) body:expr ...))
-                        #:binding [(export m) (host body)]
+                        ((~literal define-values) (m:method-var) (lambda:lambda-id (arg:id ...) body:racket-expr ...))
+                        #:binding (export m)
 
-                        ((~literal define-syntaxes) (x:racket-macro) e:expr)
-                        #:binding (export-syntax x e)
+                        ((~literal define-syntaxes) (x:racket-macro ...) e:expr)
+                        #:binding (export-syntaxes x e)
 
-                        e:expr
-                        #:binding (host e)))
+                        ((~literal begin) e:class-form ...)
+                        #:binding (re-export e)
 
-(define-host-interface/expression
-  (class e:class-form ...)
-  #:binding {(recursive e)}
-  (define-values (defns fields exprs) (group-class-decls #'(e ...)))
-  (compile-class-body defns fields exprs))
+                        e:racket-expr)
+
+  (host-interface/expression
+    (class e:class-form ...)
+    #:binding {(recursive e)}
+    (define-values (defns fields exprs) (group-class-decls #'(e ...)))
+    (compile-class-body defns fields exprs)))
 
 (begin-for-syntax
   (define-persistent-symbol-table field-index-table)
@@ -133,7 +134,12 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
       (syntax-parse exprs
         [(expr . rest-exprs)
          (syntax-parse #'expr
-           #:literals (define-values define-syntaxes field)
+           #:literals (define-values define-syntaxes begin field)
+           [(begin e ...)
+            (loop (append (attribute e) #'rest-exprs)
+                  prev-defns
+                  prev-fields
+                  prev-exprs)]
            [(define-values . _)
             (loop #'rest-exprs
                   (cons #'expr prev-defns)

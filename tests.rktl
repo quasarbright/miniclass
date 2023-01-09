@@ -264,6 +264,14 @@
           (lambda (stx) #'42)))
       (m))
     (check-equal? (phase1-eval (unbox v)) 1))
+  (test-case "define multiple syntaxes"
+    (define v #f)
+    (new
+     (class
+       (define-syntaxes (double one) (values (syntax-rules () [(double e) (list e e)])
+                                             (syntax-rules () [(one) 1])))
+       (set! v (double (one)))))
+    (check-equal? v '(1 1)))
   #;; TODO figure out why this fails
   (test-case "disappeared props"
     (define-syntax my-fields
