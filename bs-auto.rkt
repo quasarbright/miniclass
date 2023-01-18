@@ -170,45 +170,41 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   ; This is the actual class logic.
   (define (compile-class-body defns fields exprs)
     ; TODO better error messages
-    (add-decl-props
-     (append fields defns)
-     (syntax-parse (list defns fields exprs)
-       #:literals (define-values field)
-       [(; I know ~datum for lambda is bad, but I don't know how to do this correctly
-         ; There are at least two distinct (by free-identifier=?) "lambda"s that could end up here
-         ((define-values (method-name:id) (_ (method-arg:id ...) method-body:expr ...)) ...)
-         ; only 1 field definition allowed
-         ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
-         (expr ...))
-        (check-duplicate-method-names (attribute method-name))
-        (for ([field-name (attribute field-name)]
-              [field-index (in-naturals)])
-          (symbol-table-set! field-index-table field-name field-index))
-        #'(with-reference-compilers ([method-var method-reference-compiler]
-                                     [field-var field-reference-compiler])
-            (letrec ([method-table
-                      (vector (lambda (this-arg method-arg ...)
-                                ; to support class-level expressions that may call methods and fields,
-                                ; this will have to be done around class-level expressions too
-                                (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                  method-body
-                                  ...))
-                              ...)]
-                     [constructor
-                      (lambda (field-name ...)
-                        (let ([this-val (object (vector field-name ...) cls)])
-                          (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-                            ; I'm just putting this here to ensure that the body is non-empty
-                            ; That's ok, right?
-                            (void)
-                            expr
-                            ...)
-                          this-val))]
-                     [method-name->index
-                      (make-name->index (list 'method-name ...))]
-                     [cls
-                      (class-info method-name->index method-table constructor)])
-              cls))])))
+    (syntax-parse (list defns fields exprs)
+      #:literals (define-values field)
+      [(((define-values (method-name:id) (_ (method-arg:id ...) method-body:expr ...)) ...)
+        ; only 1 field definition allowed
+        ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
+        (expr ...))
+       (check-duplicate-method-names (attribute method-name))
+       (for ([field-name (attribute field-name)]
+             [field-index (in-naturals)])
+         (symbol-table-set! field-index-table field-name field-index))
+       #'(with-reference-compilers ([method-var method-reference-compiler]
+                                    [field-var field-reference-compiler])
+           (letrec ([method-table
+                     (vector (lambda (this-arg method-arg ...)
+                               ; to support class-level expressions that may call methods and fields,
+                               ; this will have to be done around class-level expressions too
+                               (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                 method-body
+                                 ...))
+                             ...)]
+                    [constructor
+                     (lambda (field-name ...)
+                       (let ([this-val (object (vector field-name ...) cls)])
+                         (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+                           ; I'm just putting this here to ensure that the body is non-empty
+                           ; That's ok, right?
+                           (void)
+                           expr
+                           ...)
+                         this-val))]
+                    [method-name->index
+                     (make-name->index (list 'method-name ...))]
+                    [cls
+                     (class-info method-name->index method-table constructor)])
+             cls))]))
 
   (define method-reference-compiler
     (make-variable-like-transformer (syntax-parser
@@ -224,23 +220,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                       [(_ name:id rhs)
                                        (let ([idx (symbol-table-ref field-index-table #'name)])
                                          #`(vector-set! (object-fields this) #,idx rhs))])))
-
-  ; originally copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/private/intdef-util.rkt
-  (define (add-decl-props decls stx)
-    (for/fold ([stx stx]) ([decl (in-list decls)])
-      (define (copy-prop src dest stx)
-        (syntax-property
-         stx
-         dest
-         (cons (syntax-property decl src)
-               (syntax-property stx dest))))
-      (copy-prop
-       'origin 'disappeared-use
-       (copy-prop
-        'disappeared-use 'disappeared-use
-        (copy-prop
-         'disappeared-binding 'disappeared-binding
-         stx)))))
 
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error

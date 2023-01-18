@@ -273,7 +273,6 @@
                                              (syntax-rules () [(one) 1])))
        (set! v (double (one)))))
     (check-equal? v '(1 1)))
-  ;#;; TODO figure out why this fails
   (define-namespace-anchor a)
   (test-case "disappeared props"
     (define (num-arrows-of check-syntax-result)
