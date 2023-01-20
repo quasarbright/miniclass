@@ -58,6 +58,13 @@
     (send counter inc)
     (send counter inc)
     (check-equal? (send counter get) 3))
+  (test-case "mutating a field in the constructor"
+    (define counter%
+      (class
+        (field count)
+        (set! count (add1 count))
+        (define (get) count)))
+    (check-equal? (send (new counter% 0) get) 1))
   (test-case "use a macro that expands to a definition"
     (define-syntax-rule (m x) (define x (lambda () 2)))
     (define foo%
