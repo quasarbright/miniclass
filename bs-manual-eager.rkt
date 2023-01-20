@@ -1,9 +1,9 @@
 #lang racket
 
-; This file is a bindingspec style implementation of a small class system.
-; It does what bindingspec does, but by hand.
-; This improves over the local expand loop style by not re-evaluating syntax definitions
-; However, it can potentially lead to quadratic re-expansions
+; This file is a syntax-spec style implementation of a small class system.
+; It does something like what syntax-spec does, but by hand.
+; However, rather than suspending host expressions like syntax-spec, they are eagerly expanded.
+; Like the non-eager variant, this implementation risks quadratic re-expansions.
 
 (module+ test (require rackunit))
 (provide (all-defined-out))
@@ -54,50 +54,9 @@
               ...)]))
 
 (define-class-literals field)
-(define-class-syntax-parameters this this%)
+(define-class-syntax-parameters this)
 (define this-parameter (make-parameter #f))
-(define this%-parameter (make-parameter #f))
 
-#|
-next steps:
-- bindingspec-style local expansion:
-  - instead of outputting define-syntax, local-expand value rhs with the def ctx that has the macros
-  - when you do that,
-    - [x] something like #%host-expr, compile-binder!, compile-reference. Only needed #%host-expr
-    - [x] suspension and resumption
-    - [x] bind surface names to transformers that ref a free id table that will end up mapping them to compiled names in the output code. Don't need it.
-    - [x] initially, this lookup would fail. But running something like compile-binder! on a binder would make an entry in the table.
-    - [x] references will be the surface identifiers, so they'll expand via the transformer. No real need for compile-reference I think, since the transformer will take care of it.
-    - [x] scope stuff for compile-binder!: you'll find out! something with syntax-local-get-shadower on the reference.
-    - [x] for #%host-expr, wrap expr positions in #%host-expr and add a stx prop containing the def ctx.
-          #%host-expr will get that prop and local-expand its argument under that def ctx
-    - eventually, we'll replace local-expand with syntax-local-expand-expressoin to avoid re-expansion after outputting local-expanded code
-
-
-The current bindingspec-style method has quadratic re-expansions. If you have nested classes (inside of parents' expression positions),
-the first class' syntax local-expands and outputs syntax that needs to be re-expanded. Then, its parent local-expands, which re-expands the first class.
-Then, its parent local expands, which re-expands both classes. And so-on. You get triangular (quadratic) re-expansions.
-
-- The syntax definitions get evaluated twice, which is inefficient and is really bad if they are effectful
-- They are evaluated once during syntax-local-bind-syntaxes, and again when the emitted letrec-syntaxes expands
-
-Eager expansion (expand rhs before compilation) wouldn't work.
-I don't remember why, and I'm not convinced it doesn't
-TODO try eager expansion under def ctx
-Even if it does work, you'd want syntax-local-expand-expression change to avoid quadratic re-expansion
-
-Currently, you have to choose between:
-- macro transformers being evaluated twice (bind macros in pass 1 for definition-emitting macros, and re-emit them in the output syntax so
-"phase 2" (expansion of emitted syntax) has access to them to expand method rhs and top-level exprs)
-- quadratic re-expansion with bindingspec-style suspensions
-
-the syntax-local-expand-expression change will allow us to create opaque suspensions with access to transformers that will only get expanded once, never local-expanded
-We will get the best of both worlds.
-Macro definitions won't have to be emitted, so they'll only be evaluated once when the suspension is created.
-And we won't have to local-expand suspensions, they'll just expand with the transformers in context.
-|#
-
-; initially copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
 (define-syntax class
   (make-expression-transformer
    (lambda (stx)
@@ -141,10 +100,11 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   ; bind transformers for methods and local macros.
   ; expand up to define-values, define-syntaxes, and field.
   ; does not expand rhs of define-values.
+  ; splices begins.
   (define (local-expand-class-body/pass-1 stx def-ctx)
     (let*
         ([ctx (generate-expand-context #t)]
-         [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda #'this #'this% #'#%app)]
+         [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda #'this #'#%app)]
          [init-exprs (let ([v (syntax->list stx)])
                        (unless v (raise-syntax-error #f "bad syntax" stx))
                        (map (λ (expr) (internal-definition-context-add-scopes def-ctx expr))
@@ -197,7 +157,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                                                              def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr
-                                     ; block does this slightly differently, be careful
                                      #'(field field-name ...)
                                      expr
                                      expr)
@@ -233,8 +192,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   ; macros.
   (define (local-expand-class-expression stx def-ctx)
     ; this syntax-parameterize is necessary because references to the stxparams are about to be expanded away.
-    (local-expand #`(syntax-parameterize ([this (make-variable-like-transformer #'(this-parameter))]
-                                          [this% (make-variable-like-transformer #'(this%-parameter))])
+    (local-expand #`(syntax-parameterize ([this (make-variable-like-transformer #'(this-parameter))])
                       #,stx)
                   'expression
                   '()
@@ -261,7 +219,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
     (add-decl-props
      def-ctx
      (append fields defns)
-     ; TODO better error messages
      (syntax-parse (list defns fields exprs)
        #:literals (define-values field)
        [(; I know ~datum for lambda is bad, but I don't know how to do this correctly
@@ -271,8 +228,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
          ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
          (expr ...))
         (check-duplicate-method-names (attribute method-name))
-        (define num-fields (length (attribute field-name)))
-        (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
         #'(let ()
             (letrec ([method-table
                       (vector
@@ -287,8 +242,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                       (lambda (field-name ...)
                         (let ([this-val (object (vector field-name ...) cls)])
                           (parameterize ([this-parameter this-val])
-                            ; I'm just putting this here to ensure that the body is non-empty
-                            ; That's ok, right?
+                            ; ensure body is non-empty
                             (void)
                             expr
                             ...)
@@ -313,13 +267,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                                  (build-list (length names) identity)))])
     (lambda (name)
       (hash-ref table (syntax->datum name) (lambda () (error 'send "no such method ~a" name))))))
-
-(begin-for-syntax
-  ; Creates a set!-transformer that accesses and mutates an elment of a vector
-  (define (make-vector-ref-transformer vector-stx index-stx)
-    (make-variable-like-transformer
-     #`(vector-ref #,vector-stx #,index-stx)
-     #`(lambda (v) (vector-set! #,vector-stx #,index-stx v)))))
 
 (define (new cls . fields)
   (apply (class-info-constructor cls) fields))

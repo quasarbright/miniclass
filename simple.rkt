@@ -1,39 +1,11 @@
 #lang racket
 
-; This file is a classical implementation of a small class system.
-; By classical, I mean without using bindingspec/ee-lib
+; This file is a simple implementation of a very small class system.
 
 (module+ test (require rackunit))
 (provide (all-defined-out))
 
 (require racket/stxparam racket/syntax syntax/id-table (for-syntax syntax/parse syntax/transformer))
-
-#|
-Features for first round:
-- (initialization) fields
-- methods
-- method calls
-- this
-- no superclasses or interfaces
-
-Information:
-- an object's fields
-- an object's methods
-- an object's class
-- a class' constructor
-- this
-
-Organization:
-- a method table is a vector of methods
-- a method is a (this arg ... -> ret)
-- a constructor is a (field ... -> object)
-- object has a vector of field values
-- object has a class
-- class has a mapping from name to index (for methods and for fields)
-- class has a mapping from field name to index? Only necessary for reflection I think. Can just rebind fields to vector stuff with set!-transformer.
-- class has a method-table
-- class has a constructor
-|#
 
 (struct class-info [name->method-index method-table constructor])
 ; A ClassInfo is a (class-info (identifier -> natural) (any ... -> Object)) where
@@ -73,24 +45,7 @@ Organization:
               ...)]))
 
 (define-class-literals field)
-(define-class-syntax-parameters this this%)
-
-#|
-before matching, local expand with stop-words field and define-values, then analyze
-
-also support define-syntaxes in the class (another stop-name)
-
-consult block macro that michael sent you!!!
-https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
-
-scoping rules too
-
-as you expand to definitions, you need to make bindings
-
-syntax-local-bind-syntaxes
-
-internal-definition-context-add-scopes for inside outside edge (block doens't do it)
-|#
+(define-class-syntax-parameters this)
 
 (define-syntax class
   (syntax-parser

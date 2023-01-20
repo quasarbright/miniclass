@@ -1,9 +1,8 @@
 #lang racket
 
-; This file is a bindingspec style implementation of a small class system.
-; It does what bindingspec does, but by hand.
-; This improves over the local expand loop style by not re-evaluating syntax definitions
-; However, it can potentially lead to quadratic re-expansions
+; This file uses syntax-spec to implement a small class system.
+; This improves over the local expand loop style by not re-evaluating syntax definitions.
+; However, it can potentially lead to quadratic re-expansions.
 
 (module+ test (require rackunit))
 (provide (all-defined-out))
@@ -11,8 +10,7 @@
 (require syntax-spec
          racket/stxparam
          syntax/transformer
-         (for-syntax ee-lib/syntax-category
-                     racket/list
+         (for-syntax racket/list
                      syntax/parse
                      syntax/transformer))
 
@@ -46,46 +44,7 @@
      #'(begin (define-syntax-parameter name (make-expression-transformer (make-literal-transformer 'name)))
               ...)]))
 
-(define-class-syntax-parameters this this%)
-
-#|
-next steps:
-- bindingspec-style local expansion:
-  - instead of outputting define-syntax, local-expand value rhs with the def ctx that has the macros
-  - when you do that,
-    - [x] something like #%host-expr, compile-binder!, compile-reference. Only needed #%host-expr
-    - [x] suspension and resumption
-    - [x] bind surface names to transformers that ref a free id table that will end up mapping them to compiled names in the output code. Don't need it.
-    - [x] initially, this lookup would fail. But running something like compile-binder! on a binder would make an entry in the table.
-    - [x] references will be the surface identifiers, so they'll expand via the transformer. No real need for compile-reference I think, since the transformer will take care of it.
-    - [x] scope stuff for compile-binder!: you'll find out! something with syntax-local-get-shadower on the reference.
-    - [x] for #%host-expr, wrap expr positions in #%host-expr and add a stx prop containing the def ctx.
-          #%host-expr will get that prop and local-expand its argument under that def ctx
-    - eventually, we'll replace local-expand with syntax-local-expand-expressoin to avoid re-expansion after outputting local-expanded code
-
-
-The current bindingspec-style method has quadratic re-expansions. If you have nested classes (inside of parents' expression positions),
-the first class' syntax local-expands and outputs syntax that needs to be re-expanded. Then, its parent local-expands, which re-expands the first class.
-Then, its parent local expands, which re-expands both classes. And so-on. You get triangular (quadratic) re-expansions.
-
-- The syntax definitions get evaluated twice, which is inefficient and is really bad if they are effectful
-- They are evaluated once during syntax-local-bind-syntaxes, and again when the emitted letrec-syntaxes expands
-
-Eager expansion (expand rhs before compilation) wouldn't work.
-I don't remember why, and I'm not convinced it doesn't
-TODO try eager expansion under def ctx
-Even if it does work, you'd want syntax-local-expand-expression change to avoid quadratic re-expansion
-
-Currently, you have to choose between:
-- macro transformers being evaluated twice (bind macros in pass 1 for definition-emitting macros, and re-emit them in the output syntax so
-"phase 2" (expansion of emitted syntax) has access to them to expand method rhs and top-level exprs)
-- quadratic re-expansion with bindingspec-style suspensions
-
-the syntax-local-expand-expression change will allow us to create opaque suspensions with access to transformers that will only get expanded once, never local-expanded
-We will get the best of both worlds.
-Macro definitions won't have to be emitted, so they'll only be evaluated once when the suspension is created.
-And we won't have to local-expand suspensions, they'll just expand with the transformers in context.
-|#
+(define-class-syntax-parameters this)
 
 (begin-for-syntax
   (define-syntax-class lambda-id
@@ -99,8 +58,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                         #:allow-extension racket-macro
                         (field name:field-var ...)
                         #:binding (export name)
-                        ; I can't do an ~alt here to specify which kind of lambda I expect, so I accept anything
-                        ; It looks like macro-introduced definitions expand to lambda, but surface definitions expand to new-lambda
                         ((~literal define-values) (m:method-var) (lambda:lambda-id (arg:id ...) body:racket-expr ...))
                         #:binding (export m)
 
@@ -169,7 +126,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   ; compile the partially expanded class-level definitions into pure racket code.
   ; This is the actual class logic.
   (define (compile-class-body defns fields exprs)
-    ; TODO better error messages
     (syntax-parse (list defns fields exprs)
       #:literals (define-values field)
       [(((define-values (method-name:id) (_ (method-arg:id ...) method-body:expr ...)) ...)
@@ -194,8 +150,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                      (lambda (field-name ...)
                        (let ([this-val (object (vector field-name ...) cls)])
                          (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-                           ; I'm just putting this here to ensure that the body is non-empty
-                           ; That's ok, right?
+                           ; ensure body is non-empty
                            (void)
                            expr
                            ...)

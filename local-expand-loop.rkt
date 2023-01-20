@@ -53,65 +53,8 @@
               ...)]))
 
 (define-class-literals field)
-(define-class-syntax-parameters this this%)
+(define-class-syntax-parameters this)
 
-#|
-before matching, local expand with stop-words field and define-values, then analyze
-
-also support define-syntaxes in the class (another stop-name)
-
-consult block macro that michael sent you!!!
-https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
-
-scoping rules too
-
-as you expand to definitions, you need to make bindings
-
-syntax-local-bind-syntaxes
-
-internal-definition-context-add-scopes for inside outside edge (block doens't do it)
-
-
-
-next steps:
-- [x] symbolic equality for method names
-  - uniqueness check
-  - test macro-introduced binding and surface binding are considered equal and in conflict
-- [x] bind method names and support references to them
-- [x] support top-level expressions
-- bindingspec-style local expansion:
-  - instead of outputting define-syntax, local-expand value rhs with the def ctx that has the macros
-  - when you do that,
-    - something like #%host-expr, compile-binder!, compile-reference
-    - suspension and resumption
-    - bind surface names to transformers that ref a free id table that will end up mapping them to compiled names in the output code
-    - initially, this lookup would fail. But running something like compile-binder! on a binder would make an entry in the table.
-    - references will be the surface identifiers, so they'll expand via the transformer. No real need for compile-reference I think, since the transformer will take care of it.
-    - scope stuff for compile-binder!: you'll find out! something with syntax-local-get-shadower on the reference.
-    - for #%host-expr, wrap expr positions in #%host-expr and add a stx prop containing the def ctx.
-      #%host-expr will get that prop and local-expand its argument under that def ctx
-    - eventually, we'll replace local-expand with syntax-local-expand-expressoin to avoid re-expansion after outputting local-expanded code
-
-The current bindingspec-style method has quadratic re-expansions. If you have nested classes (inside of parents' expression positions),
-the first class' syntax local-expands and outputs syntax that needs to be re-expanded. Then, its parent local-expands, which re-expands the first class.
-Then, its parent local expands, which re-expands both classes. And so-on. You get triangular (quadratic) re-expansions.
-
-Eager expansion (expand rhs before compilation) wouldn't work.
-- The syntax definitions get evaluated twice, which is inefficient and is really bad if they are effectful
-- They are evaluated once during syntax-local-bind-syntaxes, and again when the emitted letrec-syntaxes expands
-
-Currently, you have to choose between:
-- macro transformers being evaluated twice (bind macros in pass 1 for definition-emitting macros, and re-emit them in the output syntax so
-"phase 2" (expansion of emitted syntax) has access to them to expand method rhs and top-level exprs)
-- quadratic re-expansion with bindingspec-style suspensions
-
-the syntax-local-expand-expression change will allow us to create opaque suspensions with access to transformers that will only get expanded once, never local-expanded
-We will get the best of both worlds.
-Macro definitions won't have to be emitted, so they'll only be evaluated once when the suspension is created.
-And we won't have to local-expand suspensions, they'll just expand with the transformers in context.
-|#
-
-; initially copied from https://github.com/racket/racket/blob/a17621bec9216edd02b44cc75a2a3ad982f030b7/racket/collects/racket/block.rkt
 (define-syntax class
   (make-expression-transformer
    (lambda (stx)
@@ -144,10 +87,11 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
   ; returns a list of (partially) expanded class-level forms.
   ; expands to just field declarations and definitions (of values and syntaxes).
   ; does not expand rhs of define-values, only define-syntaxes.
+  ; splices begins.
   (define (local-expand-class-body stx def-ctx)
     (let*
         ([ctx (generate-expand-context #t)]
-         [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda #'this #'this% #'#%app)]
+         [stoplist (list #'begin #'define-syntaxes #'define-values #'field #'lambda #'this #'#%app)]
          [init-exprs (let ([v (syntax->list stx)])
                        (unless v (raise-syntax-error #f "bad syntax" stx))
                        (map (λ (expr) (internal-definition-context-add-scopes def-ctx expr))
@@ -218,7 +162,6 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
     (add-decl-props
      def-ctx
      (append fields stx-defns defns)
-     ; TODO better error messages
      (syntax-parse (list stx-defns defns fields exprs)
        #:literals (define-values field)
        [(((define-syntaxes (stx-name:id ...) stx-rhs:expr) ...)
@@ -254,8 +197,7 @@ And we won't have to local-expand suspensions, they'll just expand with the tran
                               (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
                                            ...)
                                 (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-                                  ; I'm just putting this here to ensure that the body is non-empty
-                                  ; That's ok, right?
+                                  ; ensure body is non-empty.
                                   (void)
                                   expr
                                   ...)))
