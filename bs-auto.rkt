@@ -72,55 +72,39 @@
   (host-interface/expression
     (class e:class-form ...)
     #:binding {(recursive e)}
-    (define-values (defns fields exprs) (group-class-decls #'(e ...)))
+    (define-values (defns fields exprs) (group-class-decls (splice-begins (attribute e))))
     (compile-class-body defns fields exprs)))
 
 (begin-for-syntax
   (define-persistent-symbol-table field-index-table)
 
+  #;((listof syntax?) -> (listof syntax?))
+  ; splices begins (recursively), returns flattened list of exprs.
+  (define (splice-begins exprs)
+    (syntax-parse exprs
+      [() this-syntax]
+      [(expr . rest-exprs)
+       (syntax-parse #'expr
+         #:literals (begin)
+         [(begin e ...)
+          (splice-begins (append (attribute e) #'rest-exprs))]
+         [_ (cons this-syntax (splice-begins #'rest-exprs))])]))
+
   #;((listof syntax?) -> (values (listof syntax?) (listof syntax?) (listof syntax?)))
   ; accepts a list of partially expanded class-level definitions and returns them grouped into
   ; syntax definitions, value definitions, field declarations, and top-level exprs
   (define (group-class-decls exprs)
-    (let loop ([exprs exprs]
-               ; list of (define-values ...) exprs
-               [prev-defns null]
-               ; list of (field id ...) exprs
-               [prev-fields null]
-               [prev-exprs null])
-      (syntax-parse exprs
-        [(expr . rest-exprs)
-         (syntax-parse #'expr
-           #:literals (define-values define-syntaxes begin field)
-           [(begin e ...)
-            (loop (append (attribute e) #'rest-exprs)
-                  prev-defns
-                  prev-fields
-                  prev-exprs)]
-           [(define-values . _)
-            (loop #'rest-exprs
-                  (cons #'expr prev-defns)
-                  prev-fields
-                  prev-exprs)]
-           [(define-syntaxes . _)
-            ; ignore bc they don't end up in the generated code.
-            (loop #'rest-exprs
-                  prev-defns
-                  prev-fields
-                  prev-exprs)]
-           [(field . _)
-            (loop #'rest-exprs
-                  prev-defns
-                  (cons #'expr prev-fields)
-                  prev-exprs)]
-           [_
-            (loop #'rest-exprs
-                  prev-defns
-                  prev-fields
-                  (cons #'expr prev-exprs))])]
-        [() (values (reverse prev-defns)
-                    (reverse prev-fields)
-                    (reverse prev-exprs))])))
+    (syntax-parse exprs
+      #:literals (define-values define-syntaxes field)
+      [((~alt (~and defn (define-values . _))
+              ; ignore bc they don't end up in the generated code
+              (~and stx-defn (define-syntaxes . _))
+              (~and field-decl (field . _))
+              expr)
+        ...)
+       (values (attribute defn)
+               (attribute field-decl)
+               (attribute expr))]))
 
   #;((listof syntax?) (listof syntax?) (listof syntax?) -> syntax?)
   ; compile the partially expanded class-level definitions into pure racket code.

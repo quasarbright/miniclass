@@ -99,6 +99,17 @@
           (define (f) (my-add1 x)))))
     (define foo (new foo% 1))
     (check-equal? (send foo f) 2))
+  (test-case "defines in a nested begin"
+    (define foo%
+      (class
+        (begin
+          (begin
+            (define-syntax-rule (m x) (field x))
+            (define-syntax-rule (my-add1 x) (add1 x))
+            (m x)
+            (define (f) (my-add1 x))))))
+    (define foo (new foo% 1))
+    (check-equal? (send foo f) 2))
   (test-case "shadow method name"
     (define foo%
       (let* ([f 42]
