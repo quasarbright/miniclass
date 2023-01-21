@@ -56,6 +56,10 @@
 (define-class-literals field)
 (define-class-syntax-parameters this)
 
+(begin-for-syntax
+  (define-syntax-class lambda-id
+    (pattern (~or (~literal lambda) (~literal #%plain-lambda)))))
+
 (define-syntax class
   (make-expression-transformer
    (lambda (stx)
@@ -119,7 +123,7 @@
                  (unless (= 1 (length (attribute id)))
                    (raise-syntax-error #f "each method must be defined separately" this-syntax))
                  (define/syntax-parse rhs^ (syntax-parse #'rhs
-                                             [((~and their-lambda (~datum lambda)) args body ...)
+                                             [(their-lambda:lambda-id args body ...)
                                               ; you have to expand the body separately
                                               ; so you can detect lambda later
                                               #`(their-lambda args #,(suspend-expr #'(begin body ...) def-ctx))]))
@@ -191,9 +195,7 @@
      (append fields defns)
      (syntax-parse (list defns fields exprs)
        #:literals (define-values field)
-       [(; I know ~datum for lambda is bad, but I don't know how to do this correctly
-         ; There are at least two distinct (by free-identifier=?) "lambda"s that could end up here
-         ((define-values (method-name:id) ((~datum lambda) (method-arg:id ...) method-body:expr ...)) ...)
+       [(((define-values (method-name:id) (lam:lambda-id (method-arg:id ...) method-body:expr ...)) ...)
          ; only 1 field definition allowed
          ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
          (expr ...))
@@ -202,27 +204,27 @@
         ; This would make set! on a field at class-level not mutate the actual field, but rather the constructor argument.
         (define/syntax-parse (field-name-renamed ...) (generate-temporaries #'(field-name ...)))
         #'(letrec ([method-table
-                  (vector (lambda (this-arg method-arg ...)
-                            ; to support class-level expressions that may call methods and fields,
-                            ; this will have to be done around class-level expressions too
-                            (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                              method-body
-                              ...))
-                          ...)]
-                 [constructor
-                  (lambda (field-name-renamed ...)
-                    (let ([this-val (object (vector field-name-renamed ...) cls)])
-                      (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-                        ; ensure body is non-empty
-                        (void)
-                        expr
-                        ...)
-                      this-val))]
-                 [method-name->index
-                  (make-name->index (list #'method-name ...))]
-                 [cls
-                  (class-info method-name->index method-table constructor)])
-          cls)])))
+                    (vector (lambda (this-arg method-arg ...)
+                              ; to support class-level expressions that may call methods and fields,
+                              ; this will have to be done around class-level expressions too
+                              (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
+                                method-body
+                                ...))
+                            ...)]
+                   [constructor
+                    (lambda (field-name-renamed ...)
+                      (let ([this-val (object (vector field-name-renamed ...) cls)])
+                        (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+                          ; ensure body is non-empty
+                          (void)
+                          expr
+                          ...)
+                        this-val))]
+                   [method-name->index
+                    (make-name->index (list #'method-name ...))]
+                   [cls
+                    (class-info method-name->index method-table constructor)])
+            cls)])))
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)

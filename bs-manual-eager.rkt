@@ -57,6 +57,10 @@
 (define-class-syntax-parameters this)
 (define this-parameter (make-parameter #f))
 
+(begin-for-syntax
+  (define-syntax-class lambda-id
+    (pattern (~or (~literal lambda) (~literal #%plain-lambda)))))
+
 (define-syntax class
   (make-expression-transformer
    (lambda (stx)
@@ -221,9 +225,7 @@
      (append fields defns)
      (syntax-parse (list defns fields exprs)
        #:literals (define-values field)
-       [(; I know ~datum for lambda is bad, but I don't know how to do this correctly
-         ; There are at least two distinct (by free-identifier=?) "lambda"s that could end up here
-         ((define-values (method-name:id) method-expr:expr) ...)
+       [(((define-values (method-name:id) method-expr:expr) ...)
          ; only 1 field definition allowed
          ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
          (expr ...))
