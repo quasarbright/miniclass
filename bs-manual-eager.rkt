@@ -32,13 +32,6 @@
 ; Where the first argument is "this"
 ; Represents a method on a class
 
-; define literals that error out when used outside of a class
-(define-syntax define-class-literals
-  (syntax-parser
-    [(_ lit:id ...)
-     #'(begin (define-syntax lit (make-literal-transformer 'lit))
-              ...)]))
-
 (begin-for-syntax
   #;(symbol? -> transformer?)
   ; creates a transformer that errors out when used outside of a class
@@ -46,15 +39,10 @@
     (syntax-parser
       [_ (raise-syntax-error id-sym "used outside of a class" this-syntax)])))
 
-; define syntax parameters that error out when used outside of a class
-(define-syntax define-class-syntax-parameters
-  (syntax-parser
-    [(_ name:id ...)
-     #'(begin (define-syntax-parameter name (make-literal-transformer 'name))
-              ...)]))
-
-(define-class-literals field)
-(define-class-syntax-parameters this)
+(define-syntax field (make-literal-transformer 'field))
+(define-syntax-parameter this
+  (make-expression-transformer
+   (make-literal-transformer 'this)))
 (define this-parameter (make-parameter #f))
 
 (begin-for-syntax
