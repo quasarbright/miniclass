@@ -2,6 +2,7 @@
 
   (require racket/block
            drracket/check-syntax
+           "common.rkt"
            (for-syntax rackunit syntax/parse)
            (rename-in rackunit [test-case their-test-case])
            syntax/macro-testing)

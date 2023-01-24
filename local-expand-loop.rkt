@@ -4,32 +4,16 @@
 ; Similar to the implementation of the 'block' macro.
 ; This improves over the simple implementation by allowing class-level macro uses and definitions.
 
-(module+ test (require rackunit))
 (provide (all-defined-out))
 
 (require racket/stxparam
          syntax/transformer
+         "common.rkt"
          (for-syntax syntax/context
                      syntax/intdef
                      syntax/parse
                      syntax/transformer
                      racket/list))
-
-(struct class-info [name->method-index method-table constructor])
-; A ClassInfo is a (class-info (identifier -> natural) (any ... -> Object)) where
-; name->method-index maps a method name to its vector index in the method-table
-; method-table is a vector of methods
-; Represents a class itself
-
-(struct object [fields class])
-; An Object is a (object (vector any) (vector Method) Class) where
-; fields is a vector of field-values
-; class is the class of which this object is an instance
-; Represents an object, which is an instance of a class
-
-; A Method is a (any any ... -> any)
-; Where the first argument is "this"
-; Represents a method on a class
 
 (begin-for-syntax
   #;(symbol? -> transformer?)
@@ -191,7 +175,7 @@
                                   ...)))
                             this-val))]
                        [method-name->index
-                        (make-name->index (list #'method-name ...))]
+                        (make-name->index (list 'method-name ...))]
                        [cls
                         (class-info method-name->index method-table constructor)])
                 cls)))])))
@@ -202,37 +186,9 @@
       (when duplicate
         (raise-syntax-error #f "a method with same name has already been defined" duplicate)))))
 
-#;((listof identifier?) -> (identifier? -> natural?))
-; Create a function that maps method names to their method table indices
-(define (make-name->index names)
-  (let ([table (make-hasheq (map (lambda (id index) (cons (syntax->datum id) index))
-                                 names
-                                 (build-list (length names) identity)))])
-    (lambda (name)
-      (hash-ref table (syntax->datum name) (lambda () (error 'send "no such method ~a" name))))))
-
 (begin-for-syntax
   ; Creates a set!-transformer that accesses and mutates an elment of a vector
   (define (make-vector-ref-transformer vector-stx index-stx)
     (make-variable-like-transformer
      #`(vector-ref #,vector-stx #,index-stx)
      #`(lambda (v) (vector-set! #,vector-stx #,index-stx v)))))
-
-(define (new cls . fields)
-  (apply (class-info-constructor cls) fields))
-
-(define-syntax send
-  (syntax-parser
-    [(_ obj:expr method-name:id arg:expr ...)
-     #'(send-rt obj #'method-name (list arg ...))]
-    [(_ obj:expr method-name:id . args)
-     #'(send-rt obj #'method-name args)]))
-
-(define (send-rt obj method-name-stx args)
-  (let* ([cls (object-class obj)]
-         [index ((class-info-name->method-index cls) method-name-stx)]
-         [method-table (class-info-method-table cls)]
-         [method (vector-ref method-table index)])
-    (apply method obj args)))
-
-(module+ test)
