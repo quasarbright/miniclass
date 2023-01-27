@@ -139,46 +139,38 @@
      def-ctx
      (append fields stx-defns defns)
      (syntax-parse (list stx-defns defns fields exprs)
-       #:literals (define-values field)
+       #:literals (define-syntaxes define-values field)
        [(((define-syntaxes (stx-name:id ...) stx-rhs:expr) ...)
          ((define-values (method-name:id) (lam:lambda-id (method-arg:id ...) method-body:expr ...)) ...)
          ; only 1 field definition allowed
          ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
          (expr ...))
         (check-duplicate-method-names (attribute method-name))
-        (define num-fields (length (attribute field-name)))
-        (define/syntax-parse (field-index ...) (build-list num-fields (lambda (n) #`#,n)))
-        #'(let ()
-            (letrec-syntaxes ([(stx-name ...) stx-rhs]
-                              ...
-                              [(method-name) (make-variable-like-transformer #'(lambda args (send this method-name . args)))]
-                              ...)
-              (letrec ([method-table
-                        (vector (lambda (this-arg method-arg ...)
-                                  (let ([fields (object-fields this-arg)])
-                                    (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                                 ...)
-                                      (syntax-parameterize ([this (make-variable-like-transformer #'this-arg)])
-                                        method-body
-                                        ...))))
-                                ...)]
-                       [constructor
-                        (lambda (field-name ...)
-                          (let ([this-val (object (vector field-name ...) cls)])
-                            (let ([fields (object-fields this-val)])
-                              (let-syntax ([field-name (make-vector-ref-transformer #'fields #'field-index)]
-                                           ...)
-                                (syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-                                  ; ensure body is non-empty.
-                                  (void)
-                                  expr
-                                  ...)))
-                            this-val))]
-                       [method-name->index
-                        (make-name->index (list 'method-name ...))]
-                       [cls
-                        (class-info method-name->index method-table constructor)])
-                cls)))])))
+        #'(letrec ([method-table
+                    (vector (lambda (this-arg method-arg ...)
+                              (wrap-class-exprs this-arg
+                                                (method-name ...)
+                                                (field-name ...)
+                                                (((stx-name ...) stx-rhs) ...)
+                                                method-body ...))
+                            ...)]
+                   [constructor
+                    (lambda (field-name ...)
+                      (let ([this-val (object (vector field-name ...) cls)])
+                        (wrap-class-exprs this-val
+                                          (method-name ...)
+                                          (field-name ...)
+                                          (((stx-name ...) stx-rhs) ...)
+                                          ; ensure body is non-empty.
+                                          (void)
+                                          expr
+                                          ...)
+                        this-val))]
+                   [method-name->index
+                    (make-name->index (list 'method-name ...))]
+                   [cls
+                    (class-info method-name->index method-table constructor)])
+            cls)])))
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)
@@ -187,8 +179,26 @@
         (raise-syntax-error #f "a method with same name has already been defined" duplicate)))))
 
 (begin-for-syntax
-  ; Creates a set!-transformer that accesses and mutates an elment of a vector
-  (define (make-vector-ref-transformer vector-stx index-stx)
-    (make-variable-like-transformer
-     #`(vector-ref #,vector-stx #,index-stx)
-     #`(lambda (v) (vector-set! #,vector-stx #,index-stx v)))))
+  (define (make-method-transformer this-stx method-index)
+    (make-variable-like-transformer #`(send-index #,this-stx '#,method-index)))
+
+  (define (make-field-transformer this-stx field-index)
+    (make-variable-like-transformer #`(vector-ref (object-fields #,this-stx) '#,field-index)
+                                    #`(lambda (v) (vector-set! (object-fields #,this-stx) '#,field-index v)))))
+
+; wraps body such that methods and fields are bound with a correct 'this' and body can access 'this'
+; and use locally defined macros
+(define-syntax wrap-class-exprs
+  (syntax-parser
+    [(_ this-val (method-name ...) (field-name ...) (((stx-name ...) stx-rhs) ...) body ...)
+     #:with (field-index ...) (range (length (attribute field-name)))
+     #:with (method-index ...) (range (length (attribute method-name)))
+     #'(syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
+         (letrec-syntaxes ([(method-name) (make-method-transformer #'this-val 'method-index)]
+                           ...
+                           [(field-name) (make-field-transformer #'this-val 'field-index)]
+                           ...
+                           [(stx-name ...) stx-rhs]
+                           ...)
+           body
+           ...))]))

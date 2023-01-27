@@ -6,7 +6,8 @@
          (struct-out object)
          make-name->index
          new
-         send)
+         send
+         send-index)
 
 (require (for-syntax racket/base syntax/parse))
 
@@ -45,10 +46,15 @@
     [(_ obj:expr method-name:id . args)
      #'(send-rt obj 'method-name args)]))
 
-#;(object? symbol? (listof any/c) -> any/c)
+#;(object? symbol? (listof any/c) -> any)
 (define (send-rt obj method-name args)
   (let* ([cls (object-class obj)]
-         [index ((class-info-name->method-index cls) method-name)]
+         [index ((class-info-name->method-index cls) method-name)])
+    (apply (send-index obj index) args)))
+
+#;(object? natural? -> any/c ... -> any)
+(define ((send-index obj method-index) . args)
+  (let* ([cls (object-class obj)]
          [method-table (class-info-method-table cls)]
-         [method (vector-ref method-table index)])
+         [method (vector-ref method-table method-index)])
     (apply method obj args)))

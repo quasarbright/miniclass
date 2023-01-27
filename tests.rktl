@@ -282,7 +282,10 @@
         (let ()
           (set-box! v (add1 (unbox v)))
           (lambda (stx) #'42)))
-      (m))
+      (m)
+      (m)
+      (define (f) (m))
+      (define (g) (m)))
     (check-equal? (phase1-eval (unbox v)) 1))
   (test-case "define multiple syntaxes"
     (define v #f)
@@ -309,4 +312,44 @@
                                                       (syntax-property #'(field field-name) 'disappeared-use (list (syntax-local-introduce #'name)))]))
                                                  (my-fields x)))
                                  #:namespace ns))
-                  2)))
+                  2))
+  (test-case "nested class reference outer field"
+    (define v 'v)
+    (define cls
+      (class
+        (field x)
+        (set! x 'x)
+        (let ([inner
+               (class
+                 (field y)
+                 (set! y 'y)
+                 (define (f) x))])
+          (define inner-inst (new inner #f))
+          (set! v (send inner-inst f)))))
+    (void (new cls #f))
+    (check-equal? v 'x))
+  (test-case "nested class reference outer method"
+    (define v 'v)
+    (define cls
+      (class
+        (define (f) 'f)
+        (let ([inner
+               (class
+                 (define (g) 'g)
+                 (set! v (f)))])
+          (new inner))))
+    (void (new cls))
+    (check-equal? v 'f))
+  (test-case "nested class reference outer method through macro"
+    (define v 'v)
+    (define cls
+      (class
+        (define (f) 'f)
+        (define-syntax-rule (m) (f))
+        (let ([inner
+               (class
+                 (define (g) 'g)
+                 (set! v (m)))])
+          (new inner))))
+    (void (new cls))
+    (check-equal? v 'f)))
