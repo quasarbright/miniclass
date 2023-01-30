@@ -352,4 +352,11 @@
                  (set! v (m)))])
           (new inner))))
     (void (new cls))
-    (check-equal? v 'f)))
+    (check-equal? v 'f))
+  (test-case "mutate method"
+    (check-exn #rx"cannot mutate identifier"
+               (lambda ()
+                 (convert-compile-time-error
+                  (new (class
+                         (define (f) 42)
+                         (set! f (lambda () 'bad)))))))))

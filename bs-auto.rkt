@@ -28,7 +28,6 @@
     #:allow-extension racket-macro
     (field name:racket-var ...)
     #:binding (export name)
-    ; TODO immutable-racket-var
     ((~literal define-values) (m:racket-var) (lambda:lambda-id (arg:id ...) body:racket-expr ...))
     #:binding (export m)
 
