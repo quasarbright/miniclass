@@ -58,6 +58,7 @@
          (copy-prop
           'disappeared-binding 'disappeared-binding
           stx))))))
+  
   #;(syntax? definition-context? -> (listof syntax?))
   ; expand the body of the class expression using the given definition context
   ; returns a list of (partially) expanded class-level forms.
@@ -145,60 +146,52 @@
          ; only 1 field definition allowed
          ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
          (expr ...))
+        
         (check-duplicate-method-names (attribute method-name))
-        #'(letrec ([method-table
-                    (vector (lambda (this-arg method-arg ...)
-                              (wrap-class-exprs this-arg
-                                                (method-name ...)
-                                                (field-name ...)
-                                                (((stx-name ...) stx-rhs) ...)
-                                                method-body ...))
-                            ...)]
-                   [constructor
-                    (lambda (field-name ...)
-                      (let ([this-val (object (vector field-name ...) cls)])
-                        (wrap-class-exprs this-val
-                                          (method-name ...)
-                                          (field-name ...)
-                                          (((stx-name ...) stx-rhs) ...)
-                                          ; ensure body is non-empty.
-                                          (void)
-                                          expr
-                                          ...)
-                        this-val))]
-                   [method-name->index
-                    (make-name->index (list 'method-name ...))]
-                   [cls
-                    (class-info method-name->index method-table constructor)])
-            cls)])))
+
+        (define/syntax-parse (field-index ...) (range (length (attribute field-name))))
+        (define/syntax-parse (method-index ...) (range (length (attribute method-name))))
+
+        (define/syntax-parse (field-arg ...) (generate-temporaries (attribute field-name)))
+        
+        #'(let ()
+            (define-syntax-parameter find-self #f)
+            (syntax-parameterize ([this (make-variable-like-transformer #'find-self)])
+              (letrec-syntaxes ([(method-name) (make-method-transformer #'find-self 'method-index)]
+                                ...
+                                [(field-name) (make-field-transformer #'find-self 'field-index)]
+                                ...
+                                [(stx-name ...) stx-rhs]
+                                ...)
+                               (letrec ([method-table
+                                         (vector (lambda (self method-arg ...)
+                                                   (syntax-parameterize ([find-self (make-rename-transformer #'self)])
+                                                     method-body ...))
+                                                 ...)]
+                                        [constructor
+                                         (lambda (field-arg ...)
+                                           (let ([self (object (vector field-arg ...) cls)])
+                                             (syntax-parameterize ([find-self (make-rename-transformer #'self)])
+                                               (void)
+                                               expr
+                                               ...)
+                                             self))]
+                                        [method-name->index
+                                         (make-name->index (list 'method-name ...))]
+                                        [cls
+                                         (class-info method-name->index method-table constructor)])
+                                 cls))))])))
+  
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)
     (let ([duplicate (check-duplicates names #:key syntax->datum)])
       (when duplicate
-        (raise-syntax-error #f "a method with same name has already been defined" duplicate)))))
-
-(begin-for-syntax
+        (raise-syntax-error #f "a method with same name has already been defined" duplicate))))
+  
   (define (make-method-transformer this-stx method-index)
     (make-variable-like-transformer #`(send-index #,this-stx '#,method-index)))
 
   (define (make-field-transformer this-stx field-index)
     (make-variable-like-transformer #`(vector-ref (object-fields #,this-stx) '#,field-index)
                                     #`(lambda (v) (vector-set! (object-fields #,this-stx) '#,field-index v)))))
-
-; wraps body such that methods and fields are bound with a correct 'this' and body can access 'this'
-; and use locally defined macros
-(define-syntax wrap-class-exprs
-  (syntax-parser
-    [(_ this-val (method-name ...) (field-name ...) (((stx-name ...) stx-rhs) ...) body ...)
-     #:with (field-index ...) (range (length (attribute field-name)))
-     #:with (method-index ...) (range (length (attribute method-name)))
-     #'(syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-         (letrec-syntaxes ([(method-name) (make-method-transformer #'this-val 'method-index)]
-                           ...
-                           [(field-name) (make-field-transformer #'this-val 'field-index)]
-                           ...
-                           [(stx-name ...) stx-rhs]
-                           ...)
-           body
-           ...))]))

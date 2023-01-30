@@ -25,20 +25,20 @@
 
 (syntax-spec
   (nonterminal/two-pass class-form
-                        #:allow-extension racket-macro
-                        (field name:racket-var ...)
-                        #:binding (export name)
-                        ; TODO immutable-racket-var
-                        ((~literal define-values) (m:racket-var) (lambda:lambda-id (arg:id ...) body:racket-expr ...))
-                        #:binding (export m)
+    #:allow-extension racket-macro
+    (field name:racket-var ...)
+    #:binding (export name)
+    ; TODO immutable-racket-var
+    ((~literal define-values) (m:racket-var) (lambda:lambda-id (arg:id ...) body:racket-expr ...))
+    #:binding (export m)
 
-                        ((~literal define-syntaxes) (x:racket-macro ...) e:expr)
-                        #:binding (export-syntaxes x e)
+    ((~literal define-syntaxes) (x:racket-macro ...) e:expr)
+    #:binding (export-syntaxes x e)
 
-                        ((~literal begin) e:class-form ...)
-                        #:binding (re-export e)
+    ((~literal begin) e:class-form ...)
+    #:binding (re-export e)
 
-                        e:racket-expr)
+    e:racket-expr)
 
   (host-interface/expression
     (class e:class-form ...)
@@ -85,45 +85,47 @@
         ; only 1 field definition allowed
         ((~optional (field field-name:id ...) #:defaults ([(field-name 1) null])))
         (expr ...))
+       
        (check-duplicate-method-names (attribute method-name))
-       #'(letrec ([method-table
-                   (vector (lambda (this-arg method-arg ...)
-                             (wrap-class-exprs this-arg (method-name ...) (field-name ...) method-body ...))
-                           ...)]
-                  [constructor
-                   (lambda (field-name ...)
-                     (let ([this-val (object (vector field-name ...) cls)])
-                       ; void to ensure body is non-empty
-                       (wrap-class-exprs this-val (method-name ...) (field-name ...) (void) expr ...)
-                       this-val))]
-                  [method-name->index
-                   (make-name->index (list 'method-name ...))]
-                  [cls
-                   (class-info method-name->index method-table constructor)])
-           cls)]))
+
+       (define/syntax-parse (field-index ...) (range (length (attribute field-name))))
+       (define/syntax-parse (method-index ...) (range (length (attribute method-name))))
+
+       (define/syntax-parse (field-arg ...) (generate-temporaries (attribute field-name)))
+
+       #'(let ()
+           (define-syntax-parameter find-self #f)
+           (syntax-parameterize ([this (make-variable-like-transformer #'find-self)])
+             (letrec-syntax ([method-name (make-method-transformer #'find-self 'method-index)]
+                             ...
+                             [field-name (make-field-transformer #'find-self 'field-index)]
+                             ...)
+               (letrec ([method-table
+                         (vector (lambda (self method-arg ...)
+                                   (syntax-parameterize ([find-self (make-rename-transformer #'self)])
+                                     method-body ...))
+                                 ...)]
+                        [constructor
+                         (lambda (field-arg ...)
+                           (let ([self (object (vector field-arg ...) cls)])
+                             (syntax-parameterize ([find-self (make-rename-transformer #'self)])
+                               ; void to ensure body is non-empty
+                               (void)
+                               expr ...)
+                             self))]
+                        [method-name->index
+                         (make-name->index (list 'method-name ...))]
+                        [cls
+                         (class-info method-name->index method-table constructor)])
+                 cls))))]))
 
   #;((listof identifier?) -> void?)
   ; If there are (symbolically) duplicate method names, error
   (define (check-duplicate-method-names names)
     (let ([duplicate (check-duplicates names #:key syntax->datum)])
       (when duplicate
-        (raise-syntax-error #f "a method with same name has already been defined" duplicate)))))
-
-; wraps body such that methods and fields are bound with a correct 'this' and body can access 'this'
-(define-syntax wrap-class-exprs
-  (syntax-parser
-    [(_ this-val (method-name ...) (field-name ...) body ...)
-     #:with (field-index ...) (range (length (attribute field-name)))
-     #:with (method-index ...) (range (length (attribute method-name)))
-     #'(syntax-parameterize ([this (make-variable-like-transformer #'this-val)])
-         (letrec-syntaxes ([(method-name) (make-method-transformer #'this-val 'method-index)]
-                           ...
-                           [(field-name) (make-field-transformer #'this-val 'field-index)]
-                           ...)
-           body
-           ...))]))
-
-(begin-for-syntax
+        (raise-syntax-error #f "a method with same name has already been defined" duplicate))))
+  
   (define (make-method-transformer this-stx method-index)
     (make-variable-like-transformer #`(send-index #,this-stx '#,method-index)))
 
