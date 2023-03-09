@@ -92,10 +92,10 @@
                   [todo (cdr todo)])
               (syntax-parse expr
                 #:literals (begin define-syntaxes define-values field)
-                [(begin . rest)
+                [(begin ~! . rest)
                  ; splice the begin
                  (loop (append (syntax->list #'rest) todo) r)]
-                [(define-syntaxes (id:id ...) rhs)
+                [(define-syntaxes ~! (id:id ...) rhs)
                  ; bind ids to transformers in the def-ctx
                  (with-syntax ([rhs (local-transformer-expand #'rhs 'expression null)])
                    (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
@@ -103,7 +103,7 @@
                                                                        def-ctx)])
                      ; don't care about syntax defns after pass1
                      (loop todo r)))]
-                [(define-values (id:id ...) rhs)
+                [(define-values ~! (id:id ...) rhs)
                  (unless (= 1 (length (attribute id)))
                    (raise-syntax-error #f "each method must be defined separately" this-syntax))
                  ; bind method ids to transformers in the def-ctx
@@ -118,7 +118,7 @@
                                      expr
                                      expr)
                                     r)))]
-                [(field field-name:id ...)
+                [(field ~! field-name:id ...)
                  ; NOTE this only works for a single field declaration
                  (define/syntax-parse (field-index ...) (build-list (length (attribute field-name)) (λ (n) #`#,n)))
                  (with-syntax ([(field-name ...) (syntax-local-bind-syntaxes (syntax->list #'(field-name ...))

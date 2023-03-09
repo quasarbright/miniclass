@@ -80,10 +80,10 @@
                   [todo (cdr todo)])
               (syntax-parse expr
                 #:literals (begin define-syntaxes define-values field)
-                [(begin . rest)
+                [(begin ~! . rest)
                  ; splice the begin
                  (loop (append (syntax->list #'rest) todo) r)]
-                [(define-syntaxes (id:id ...) rhs)
+                [(define-syntaxes ~! (id:id ...) rhs)
                  ; bind ids to transformers in the def-ctx
                  (with-syntax ([rhs (local-transformer-expand #'rhs 'expression null)])
                    (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...))
@@ -95,7 +95,7 @@
                                        expr
                                        expr)
                                       r))))]
-                [(define-values (id:id ...) rhs)
+                [(define-values ~! (id:id ...) rhs)
                  (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr
@@ -103,7 +103,7 @@
                                      expr
                                      expr)
                                     r)))]
-                [(field id:id ...)
+                [(field ~! id:id ...)
                  (with-syntax ([(id ...) (syntax-local-bind-syntaxes (syntax->list #'(id ...)) #f def-ctx)])
                    (loop todo (cons (datum->syntax
                                      expr
